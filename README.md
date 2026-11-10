@@ -80,9 +80,43 @@ models/ results/ generated artifacts (git-ignored)
 - **Observation:** 4 planes (wall, player, box, target) padded to 7×7, so the same
   network works for 6×6 and 7×7 levels.
 - **Known limits:** only corner deadlocks are detected (not frozen boxes along walls or
-  box pairs); small maps only; DQN training takes about 10 s per 1,000 steps on this CPU,
-  i.e. ~50 min for 300k steps.
+  box pairs); small maps only; the greedy DQN can get stuck repeating a move (see Results).
 
 ## Results
 
-Not recorded yet. After training, paste the table from `results/s2_results.md` here.
+### Stage 1 — Q-Learning on the example level
+All 3 seeds learn `URD` (3 steps, identical to BFS) in about 0.5 s each, from ~140 visited states.
+
+### Stage 2 — DQN on random 6×6 levels (1 box)
+`best.pt` of each seed (selected on validation), greedy play (ε = 0), mean ± std over seeds 0, 1, 2.
+Random is also averaged over 3 seeds.
+
+| Agent | Train (1,000) | Validation (100) | **Test (200)** | Steps ÷ BFS | Deadlock |
+|---|---|---|---|---|---|
+| Random | 22.8 ± 1.3 % | 23.3 ± 4.2 % | 27.2 ± 3.4 % | 5.85 | 26.2 % |
+| **DQN** | 96.6 ± 0.0 % | 80.3 ± 2.4 % | **75.8 ± 3.2 %** | 1.01 | 0.0 % |
+| BFS (optimal) | 100 % | 100 % | 100 % | 1.00 | 0 % |
+
+Per-seed best validation: 82 %, 82 %, 77 %, so 2 of 3 seeds pass the ≥ 80 % stage 2 criterion.
+Training time: ~93 min per seed for 300k steps, 3 seeds in parallel on CPU (4 threads each);
+the plan's 15–30 min estimate was too optimistic.
+
+![training curves](docs/s2_training.png)
+
+**What the numbers say**
+
+- **It learned to play, far above random:** 76 % on unseen test levels vs 27 % for random.
+  When it solves a level it is almost always optimal (1.01 × BFS) and it never pushes a box
+  into a corner.
+- **It partly memorises the training levels:** 97 % on train vs 80 % validation / 76 % test.
+  Validation is slightly optimistic because `best.pt` was chosen on it; test is the honest number.
+- **Harder levels fail more:** on the test set (seed 0), success is 82 % for 3-step levels but
+  only 25 % for 7-step levels.
+- **Main failure mode is a loop, not a bad push:** of 59 validation failures across the
+  3 seeds, 50 are the agent repeating one move into a wall and 9 are a two-move
+  back-and-forth. Because a wall bump leaves the board unchanged, a deterministic greedy
+  policy repeats the same choice until the 50-step limit.
+
+| Optimal win (test #12, 6 steps) | Win with detour (test #14, 11 vs 7) | Loss: stuck on a wall (test #11) |
+|---|---|---|
+| ![](docs/test12.gif) | ![](docs/test14.gif) | ![](docs/test11.gif) |
