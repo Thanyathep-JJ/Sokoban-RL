@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.venv/
+build/
+dist/
+
+# generated artifacts (reproducible from the CLI)
+data/*.json
+models/
+results/
+
+# local Claude Code config (personal permissions, unrelated skills)
+.claude/
