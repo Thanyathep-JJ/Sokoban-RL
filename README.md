@@ -35,6 +35,10 @@ sokoban-rl train --stage 2 --seed 0 --steps 20000      # quick smoke test first
 sokoban-rl train --stage 2 --seed 0                    # full run (also --seed 1, --seed 2)
 sokoban-rl plot models/s2_seed0/log.csv models/s2_seed1/log.csv models/s2_seed2/log.csv
 
+# In a second terminal while training runs: progress bar, percent, time left (Ctrl+C stops watching only)
+sokoban-rl watch                                       # every unfinished run
+sokoban-rl watch models_double/s2_seed2                # one specific run
+
 # Final numbers: Random vs DQN (best.pt of each seed) vs BFS on val and test
 sokoban-rl evaluate --stage 2 --splits val test --agents random bfs dqn --seeds 0 1 2
 
@@ -73,6 +77,7 @@ src/sokoban_rl/
   policies.py    random / BFS / Q-table policies
   evaluation.py  success %, steps vs BFS, deadlock %
   human.py       play a level yourself and compare with the AI (`challenge`)
+  monitor.py     live progress bar for a running training (`watch`)
   render.py      terminal animation + GIF
   plotting.py    training curves
   cli.py         the `sokoban-rl` command

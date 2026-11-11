@@ -208,6 +208,21 @@ def cmd_play(args) -> None:
         print(f"บันทึก GIF ที่ {save_gif(level, res.actions, args.gif)}")
 
 
+def cmd_watch(args) -> None:
+    from sokoban_rl.human import enable_ansi
+    from sokoban_rl.monitor import find_active_runs, watch
+
+    dirs = args.run_dirs or find_active_runs()
+    if not dirs:
+        sys.exit("no training in progress. Pass a run folder, e.g. models_double/s2_seed2")
+    missing = [str(d) for d in dirs if not (Path(d) / "config.json").exists()]
+    if missing:
+        sys.exit(f"no config.json in: {', '.join(missing)} (is this a training run folder?)")
+    if sys.stdout.isatty():
+        enable_ansi()
+    watch(dirs, interval=args.interval, once=args.once)
+
+
 def cmd_challenge(args) -> None:
     """You play first; then the AI plays the same level and the two are compared with BFS."""
     from sokoban_rl.evaluation import run_episode
@@ -300,6 +315,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--no-anim", action="store_true")
     s.add_argument("--gif")
     s.set_defaults(func=cmd_play)
+
+    s = sub.add_parser("watch", help="live progress bar for a running training (reads its log)")
+    s.add_argument("run_dirs", nargs="*", help="run folders, e.g. models_double/s2_seed2 (default: all unfinished)")
+    s.add_argument("--interval", type=float, default=1.0, help="seconds between redraws")
+    s.add_argument("--once", action="store_true", help="print the status once and exit")
+    s.set_defaults(func=cmd_watch)
 
     s = sub.add_parser("challenge", help="play a level yourself, then compare with the AI and BFS")
     src = s.add_mutually_exclusive_group()

@@ -65,6 +65,11 @@ def test_play_interactive_win(example_level):
     assert "@" in out.getvalue()
 
 
+def test_unknown_key_does_not_move(example_level):
+    res = play_interactive(example_level, keys("", "yes", "no", "quit"), io.StringIO())
+    assert res.outcome == "quit" and res.actions == ""
+
+
 def test_give_up_needs_confirmation(example_level):
     res = play_interactive(example_level, keys("U", "giveup", "no", "R", "giveup", "yes"), io.StringIO())
     assert res.outcome == "gave_up" and res.actions == "UR"

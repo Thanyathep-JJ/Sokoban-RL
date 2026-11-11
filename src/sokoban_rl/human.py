@@ -32,6 +32,7 @@ KEYS = {
     "r": "restart", "g": "giveup", "q": "quit", "\x03": "quit", "\x04": "quit",
     "y": "yes", "n": "no",
 }
+MOVES = frozenset(ACTION_CHARS)
 _ARROWS_WINDOWS = {"H": "U", "P": "D", "K": "L", "M": "R"}
 _ARROWS_ANSI = {"A": "U", "B": "D", "D": "L", "C": "R"}
 
@@ -176,7 +177,9 @@ def play_interactive(level: Level, get_key: Callable[[], str], out=sys.stdout) -
         _draw(out, level, s, note)
         cmd = get_key()
         note = ""
-        if cmd in ACTION_CHARS:
+        if not cmd:  # a key with no meaning ('' would otherwise match `in ACTION_CHARS`)
+            note = "ปุ่มนี้ใช้ไม่ได้"
+        elif cmd in MOVES:
             if s.press(cmd) == "blocked":
                 note = "เดินไม่ได้ (ชนกำแพงหรือกล่อง)"
             elif s.won:

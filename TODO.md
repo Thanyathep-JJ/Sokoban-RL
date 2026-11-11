@@ -1,13 +1,13 @@
 # TODO
 
-## 1. Retrain stage 2 seed 2 with Double DQN (paused)
+## 1. Retrain stage 2 seed 2 with Double DQN (running)
 
 Seed 2 reached 77 % best validation success with vanilla DQN, below the ≥ 80 % stage 2
 criterion (seeds 0 and 1 reached 82 %). The decision to retrain was made on validation only.
 
-A Double DQN run was started on 2026-11-10 and stopped at 30k / 500k steps
-(validation 13 % at that point, which is normal this early). Training cannot resume from a
-checkpoint, so start over:
+A first attempt on 2026-11-10 was stopped at 30k / 500k steps. It was restarted from scratch on
+2026-11-11 (about 75–85 min when it runs alone); follow it with `sokoban-rl watch`.
+Training cannot resume from a checkpoint, so if it is interrupted, start over:
 
 ```bash
 sokoban-rl train --stage 2 --seed 2 --double --steps 500000 --eps-decay 150000 \
