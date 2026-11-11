@@ -54,6 +54,9 @@ def test_stuck_when_box_pushed_into_corner(example_level):
     for a in "RDRU":  # push the box right, then up into the top right corner
         s.press(a)
     assert s.stuck and not s.won
+    for _ in range(3):
+        s.undo()
+    assert s.actions == "R" and s.stuck  # already lost here: the box can never leave the right edge
     s.undo()
     assert not s.stuck
 

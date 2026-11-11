@@ -47,11 +47,18 @@ sokoban-rl play --file data/example.txt --agent qtable --gif results/example.gif
 sokoban-rl play --split test --idx 5 --agent dqn --gif results/test5.gif
 sokoban-rl play --file my_level.txt --agent dqn        # draw your own 6x6 level
 
+# Graphical game (retro pixel-art window): level after level, score, timer, saved progress
+sokoban-rl gui                                         # continues at your first unsolved test level
+sokoban-rl gui --level 150 --model models_double/s2_seed2/best.pt
+sokoban-rl gui --file my_level.txt
+
 # Challenge: you play first, then the AI plays the same level and both are compared with BFS
 sokoban-rl challenge                                   # random test level
 sokoban-rl challenge --split test --idx 11             # a specific level (replay one you lost)
 sokoban-rl challenge --file my_level.txt --agent qtable
 ```
+
+![graphical game](docs/gui.png)
 
 In `challenge`, move with **W A S D** or the arrow keys, **Z** undoes, **R** restarts, **G** gives
 up (asks to confirm, then shows the AI's answer), **Q** quits. When you win or give up it shows
@@ -77,6 +84,10 @@ src/sokoban_rl/
   policies.py    random / BFS / Q-table policies
   evaluation.py  success %, steps vs BFS, deadlock %
   human.py       play a level yourself and compare with the AI (`challenge`)
+  gui.py         graphical game window (`gui`, tkinter)
+  sprites.py     original 16x16 pixel-art tiles drawn in code
+  campaign.py    level order, score, stars, timer results, saved progress
+  deadlock.py    dead squares + frozen boxes (warnings in the human games)
   monitor.py     live progress bar for a running training (`watch`)
   render.py      terminal animation + GIF
   plotting.py    training curves
@@ -96,8 +107,12 @@ models/ results/ generated artifacts (git-ignored)
   rotation and reflection (8 symmetries). The test split is for the final report only.
 - **Observation:** 4 planes (wall, player, box, target) padded to 7×7, so the same
   network works for 6×6 and 7×7 levels.
-- **Known limits:** only corner deadlocks are detected (not frozen boxes along walls or
-  box pairs); small maps only; the greedy DQN can get stuck repeating a move (see Results).
+- **Deadlocks:** the RL environment ends an episode only on a corner deadlock, and all results
+  use that rule. The human games use the stronger `deadlock.py` (boxes on dead squares along a
+  wall, frozen pairs and 2x2 blocks) to warn you early; a test checks it never flags a solvable state.
+- **Scoring in `gui`:** 100 × shortest ÷ your moves per level (100 = optimal, 0 = gave up);
+  stars 3 / 2 / 1 for optimal / ≤ 1.5× / solved. Best results are saved in `results/progress_*.json`.
+- **Known limits:** small maps only; the greedy DQN can get stuck repeating a move (see Results).
 
 ## Results
 
@@ -115,6 +130,18 @@ Random is also averaged over 3 seeds.
 | BFS (optimal) | 100 % | 100 % | 100 % | 1.00 | 0 % |
 
 Per-seed best validation: 82 %, 82 %, 77 %, so 2 of 3 seeds pass the ≥ 80 % stage 2 criterion.
+
+**Extra run: seed 2 retrained with Double DQN.** Seed 2 missed the criterion, so it was trained
+again with Double DQN targets, 500k steps and ε decaying over 150k steps (`models_double/`).
+This is one extra run, decided on validation only, and it changes two things at once (algorithm
+and length), so it does not show which of them helped. The table above is left as it was.
+
+| Seed 2 | Train | Validation | Test | Steps ÷ BFS | Deadlock |
+|---|---|---|---|---|---|
+| DQN, 300k steps (in the table above) | 96.7 % | 77.0 % | 71.5 % | 1.01 | 0.0 % |
+| Double DQN, 500k steps | 97.2 % | **82.0 %** | **81.0 %** | 1.01 | 0.0 % |
+
+With it, all 3 seeds reach ≥ 80 % validation. Training took 88 min alone on CPU (8 threads).
 Training time: ~93 min per seed for 300k steps, 3 seeds in parallel on CPU (4 threads each);
 the plan's 15–30 min estimate was too optimistic.
 

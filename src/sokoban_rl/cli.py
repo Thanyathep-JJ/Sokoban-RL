@@ -223,6 +223,55 @@ def cmd_watch(args) -> None:
     watch(dirs, interval=args.interval, once=args.once)
 
 
+def _agent_factory(args):
+    """level -> policy (or None when no AI is available). The DQN model is loaded once, on first use."""
+    if args.agent == "none":
+        return lambda level: None
+    if args.agent == "qtable":
+        from sokoban_rl.policies import QTablePolicy
+        from sokoban_rl.qlearning import train_q
+
+        return lambda level: QTablePolicy(train_q(level, seed=args.seed))
+    model = Path(args.model or f"{args.models_dir}/s{args.stage}_seed{args.seed}/best.pt")
+    if not model.exists():
+        print(f"ไม่พบโมเดล {model} จะเทียบกับ BFS อย่างเดียว")
+        return lambda level: None
+    cache = {}
+
+    def dqn(level):
+        if "p" not in cache:
+            from sokoban_rl.dqn import DQNPolicy, load_model
+
+            cache["p"] = DQNPolicy(load_model(model))
+        return cache["p"]
+
+    return dqn
+
+
+def cmd_gui(args) -> None:
+    from sokoban_rl.campaign import Progress
+
+    try:
+        from sokoban_rl.gui import run_gui
+    except ImportError as e:  # some Linux Pythons ship without tkinter
+        sys.exit(f"เปิดหน้าต่างไม่ได้ ต้องมี tkinter: {e}")
+    if args.file:
+        level = _load_level(args)
+        _solve_or_exit(level)
+        levels, progress = [level], Progress(None)
+    else:
+        try:
+            levels = load_levels(Path(args.data_dir) / f"s{args.stage}_{args.split}.json")
+        except (ValueError, OSError) as e:
+            sys.exit(f"อ่านด่านไม่ได้: {e} (สร้างด่านก่อนด้วย: sokoban-rl make-levels --stage {args.stage})")
+        path = Path(args.progress_dir) / f"progress_s{args.stage}_{args.split}.json"
+        if args.reset and path.exists():
+            path.unlink()
+        progress = Progress(path)
+    start = args.level - 1 if args.level else None
+    run_gui(levels, progress, _agent_factory(args), args.agent, start)
+
+
 def cmd_challenge(args) -> None:
     """You play first; then the AI plays the same level and the two are compared with BFS."""
     from sokoban_rl.evaluation import run_episode
@@ -321,6 +370,20 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--interval", type=float, default=1.0, help="seconds between redraws")
     s.add_argument("--once", action="store_true", help="print the status once and exit")
     s.set_defaults(func=cmd_watch)
+
+    s = sub.add_parser("gui", help="graphical game: level after level with score, timer and saved progress")
+    src = s.add_mutually_exclusive_group()
+    src.add_argument("--file", help="play one level drawn in a text file")
+    src.add_argument("--split", choices=("train", "val", "test"), default="test")
+    s.add_argument("--stage", type=int, choices=(2, 3), default=2)
+    s.add_argument("--level", type=int, help="start at this level number (1 = easiest); default: first unsolved")
+    s.add_argument("--agent", choices=("dqn", "qtable", "none"), default="dqn")
+    s.add_argument("--seed", type=int, default=0, help="which trained model to compare with")
+    s.add_argument("--model")
+    s.add_argument("--models-dir", default="models")
+    s.add_argument("--progress-dir", default="results", help="where your scores are saved")
+    s.add_argument("--reset", action="store_true", help="forget saved scores for this split")
+    s.set_defaults(func=cmd_gui, idx=None)
 
     s = sub.add_parser("challenge", help="play a level yourself, then compare with the AI and BFS")
     src = s.add_mutually_exclusive_group()

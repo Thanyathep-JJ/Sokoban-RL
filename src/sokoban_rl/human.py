@@ -11,6 +11,7 @@ import sys
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
+from sokoban_rl.deadlock import dead_boxes
 from sokoban_rl.evaluation import EpisodeResult
 from sokoban_rl.game import (
     ACTION_CHARS,
@@ -18,7 +19,6 @@ from sokoban_rl.game import (
     Boxes,
     Level,
     Pos,
-    is_deadlock,
     level_to_lines,
     move,
 )
@@ -32,6 +32,9 @@ KEYS = {
     "r": "restart", "g": "giveup", "q": "quit", "\x03": "quit", "\x04": "quit",
     "y": "yes", "n": "no",
 }
+# the same physical keys while the Thai (Kedmanee) keyboard layout is active
+KEYS.update({"ไ": "U", "ห": "D", "ฟ": "L", "ก": "R", "ผ": "undo", "พ": "restart", "เ": "giveup",
+             "ๆ": "quit", "ั": "yes", "ื": "no"})
 MOVES = frozenset(ACTION_CHARS)
 _ARROWS_WINDOWS = {"H": "U", "P": "D", "K": "L", "M": "R"}
 _ARROWS_ANSI = {"A": "U", "B": "D", "D": "L", "C": "R"}
@@ -117,9 +120,14 @@ class Session:
         return self.boxes == self.level.targets
 
     @property
+    def dead_boxes(self) -> set[Pos]:
+        """Boxes that can never reach a target any more (corner, dead wall, frozen block)."""
+        return dead_boxes(self.level, self.boxes)
+
+    @property
     def stuck(self) -> bool:
-        """A box sits in a corner: the level can no longer be solved without undoing."""
-        return not self.won and is_deadlock(self.level, self.boxes)
+        """The level can no longer be solved without undoing."""
+        return not self.won and bool(self.dead_boxes)
 
     def press(self, action: str) -> str:
         """Try a move ("U", "D", "L" or "R"). Returns "moved", "pushed" or "blocked"."""
@@ -186,7 +194,7 @@ def play_interactive(level: Level, get_key: Callable[[], str], out=sys.stdout) -
                 _draw(out, level, s, "")
                 return result("won")
             elif s.stuck:
-                note = "กล่องติดมุมแล้ว แก้ไม่ได้อีก กด Z เพื่อย้อน หรือ G เพื่อยอมแพ้"
+                note = "กล่องติดตายแล้ว (ดันไปถึงเป้าไม่ได้อีก) กด Z เพื่อย้อน หรือ G เพื่อยอมแพ้"
         elif cmd == "undo":
             if not s.undo():
                 note = "ไม่มีก้าวให้ย้อน"

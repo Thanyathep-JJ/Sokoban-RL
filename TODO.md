@@ -1,26 +1,9 @@
 # TODO
 
-## 1. Retrain stage 2 seed 2 with Double DQN (running)
+## 1. Retrain stage 2 seed 2 with Double DQN (done 2026-11-11)
 
-Seed 2 reached 77 % best validation success with vanilla DQN, below the ≥ 80 % stage 2
-criterion (seeds 0 and 1 reached 82 %). The decision to retrain was made on validation only.
-
-A first attempt on 2026-11-10 was stopped at 30k / 500k steps. It was restarted from scratch on
-2026-11-11 (about 75–85 min when it runs alone); follow it with `sokoban-rl watch`.
-Training cannot resume from a checkpoint, so if it is interrupted, start over:
-
-```bash
-sokoban-rl train --stage 2 --seed 2 --double --steps 500000 --eps-decay 150000 \
-    --threads 8 --out-dir models_double/s2_seed2
-```
-
-- Takes about 2–2.5 h on CPU, so keep the PC awake and plugged in.
-- When it is done, evaluate it once on val and test:
-  ```bash
-  sokoban-rl evaluate --stage 2 --splits val test --agents dqn --seeds 2 --models-dir models_double
-  ```
-- Add it to the README as an **extra row** next to the original seed 2 (do not replace the
-  original numbers), and say it is Double DQN with 500k steps.
+Double DQN, 500k steps: best validation 82 %, test 81.0 % (original seed 2: 77 % / 71.5 %).
+Added to the README as an extra row; the original table is unchanged.
 
 ## 2. Optional follow-ups
 
