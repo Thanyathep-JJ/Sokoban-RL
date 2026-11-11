@@ -117,13 +117,27 @@ models/ results/ generated artifacts (git-ignored)
   from a large generated pool and none is shaped like a level the AI trains or is tested on.
   Sets are cached in `data/play_*.json`. Modes with 2 and 3 boxes exist but are hidden for now
   (`--difficulty two_boxes` / `expert`).
-- **Stage 5 (mixed board sizes, not used by default):** one box on 5x5, 6x6 and 7x7 boards
-  (10 % / 45 % / 45 % of each split, because the 3x3 floor has only ~180 distinct levels), trained
-  300k steps from the seed 2 Double DQN model. Test success 47.5 % (random 31.5 %). It is better
-  than the stage 2 model only on the 5x5 floor (41 % vs 31 %) and clearly worse on 3x3 and 4x4
-  (50 % vs 70 %, 53 % vs 89 %), so the game keeps using the stage 2 model; try stage 5 with
-  `--model models/s5_seed0/best.pt`. A follow-up stage 6 run (7x7 board only, warm-started from stage 5,
-  300k steps) failed: validation peaked at 24 % after 50k steps, then fell to 7-9 % while the training
+- **Stage 5 (mixed board sizes):** one box on 5x5, 6x6 and 7x7 boards (10 % / 45 % / 45 % of each
+  split, because the 3x3 floor has only ~180 distinct levels). Trained without `--mask` (300k steps
+  from the seed 2 Double DQN model) it reached only 47.5 % test and was worse than stage 2 on small
+  floors, so it was not used. Trained again **with `--mask`** (400k steps, same start, `models_mask/s5_seed0`)
+  it reaches 85.5 % test (random 31.5 %). Success by floor size, test split, both models playing
+  with `--mask`:
+
+  | | 3x3 floor (20) | 4x4 floor (90) | 5x5 floor (90) |
+  |---|---|---|---|
+  | Stage 2 models, seeds 0 / 1 / 2 | 85 / 75 / 75 % | 88 / 90 / 89 % | 31 / 27 / 38 % |
+  | Stage 2 Double DQN (seed 2 retrain) | 80 % | 96 % | 42 % |
+  | Stage 5, trained with `--mask` | 90 % | 87 % | **83 %** |
+
+  The gain is on the 5x5 floor; on 3x3 and 4x4 it is about the same as stage 2. So `gui` plays
+  1-box levels on a 5x5 floor (the hard mode) with the stage 5 model (`--big-model`, default
+  `models_mask/s5_seed0/best.pt`, only while masking is on) and everything else with the stage 2
+  model. On the game's own 20 stages per mode (shapes the AI never saw) the success is easy 70 %,
+  medium 50 %, hard 5 % -> 40 % with the stage 5 model. With 20 levels per row this is noisy.
+  The checkpoint was picked on the validation split (82 %); the test split was used only once, after.
+  A follow-up stage 6 run (7x7 board only, warm-started from the unmasked stage 5,
+  300k steps, no masking) failed: validation peaked at 24 % after 50k steps, then fell to 7-9 % while the training
   return turned negative, and its final test success (14.5 %) is below random (18.5 %). Not used. A 2-box run (stage 3) stayed at 1-4 % validation, below
   random (14 %), so it was stopped; stages 3 and 4 can still be generated with `make-levels`.
 - **Scoring in `gui`:** 100 × shortest ÷ your moves per level (100 = optimal, 0 = gave up);
@@ -191,7 +205,8 @@ The idea came from looking at the validation failures, so treat the validation g
 the test set was evaluated once, after the idea was fixed. The table above is unchanged and is
 still the plain greedy result. `play`, `challenge` and `evaluate` take `--mask`; the `gui` game
 uses it by default (`--no-mask` turns it off). `train --mask` also removes such moves from
-exploration and from the Q target (max over real moves only).
+exploration and from the Q target (max over real moves only); the stage 5 result above shows
+that this fixes the bigger boards, where masking only at play time was not enough.
 
 | Optimal win (test #12, 6 steps) | Win with detour (test #14, 11 vs 7) | Loss: stuck on a wall (test #11) |
 |---|---|---|

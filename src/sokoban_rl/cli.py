@@ -249,13 +249,16 @@ def _agent_factory(args):
 
         return lambda level: QTablePolicy(train_q(level, seed=args.seed))
     # one model per box count: 1 box -> stage 2, 2 boxes -> stage 3, 3 boxes -> stage 4.
-    # (The mixed-size stage 5 model is weaker on 3x3 and 4x4 floors, so it is not picked
-    # automatically; use --model models/s5_seed0/best.pt to try it.)
+    # A single box on a 5x5 floor (7x7 board) is where the stage 2 model is weak (26-42% right), so
+    # that case uses the mixed-size model trained with --mask (--big-model, 83%). It needs the masking
+    # at play time, so it is only used while masking is on. If the file is missing, stage 2 is used.
     stage_for_boxes = {1: 2, 2: 3, 3: 4}
-    cache: dict[int, object] = {}
+    cache: dict[tuple[int, bool], object] = {}
     warned: set[Path] = set()
 
-    def model_path(n_boxes: int) -> Path | None:
+    def model_path(n_boxes: int, big: bool) -> Path | None:
+        if big:
+            return Path(args.big_model)
         if n_boxes == 1 and args.model:
             return Path(args.model)
         stage = stage_for_boxes.get(n_boxes)
@@ -263,18 +266,21 @@ def _agent_factory(args):
 
     def dqn(level):
         n = len(level.boxes)
-        if n not in cache:
-            path = model_path(n)
+        big = n == 1 and level.width >= 7 and args.mask and not args.model
+        if big and not Path(args.big_model).exists():
+            big = False  # not trained yet: the stage 2 model still plays it, just worse
+        if (n, big) not in cache:
+            path = model_path(n, big)
             if path is None or not path.exists():
                 if path and path not in warned:
                     warned.add(path)
                     print(f"ไม่พบโมเดล {path} ด่านที่มีลัง {n} ใบจะเทียบกับ BFS อย่างเดียว")
-                cache[n] = None
+                cache[n, big] = None
             else:
                 from sokoban_rl.dqn import DQNPolicy, load_model
 
-                cache[n] = DQNPolicy(load_model(path), mask=args.mask)
-        return cache[n]
+                cache[n, big] = DQNPolicy(load_model(path), mask=args.mask)
+        return cache[n, big]
 
     return dqn
 
@@ -426,6 +432,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--models-dir", default="models")
     s.add_argument("--progress-dir", default="results", help="where your scores are saved")
     s.add_argument("--reset", action="store_true", help="forget all saved scores")
+    s.add_argument("--big-model", default="models_mask/s5_seed0/best.pt",
+                   help="model for one box on a 5x5 floor (trained with --mask, so used only with masking)")
     s.add_argument("--no-mask", dest="mask", action="store_false",
                    help="let the AI waste moves on walls (it is stronger without them)")
     s.set_defaults(func=cmd_gui, idx=None, split="test")

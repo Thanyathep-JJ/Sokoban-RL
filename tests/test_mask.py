@@ -58,3 +58,31 @@ def test_masked_training_smoke(tmp_path):
     from sokoban_rl.human import count_wasted
 
     assert count_wasted(level, res.actions) == 0
+
+
+def test_agent_factory_uses_the_big_model_only_on_5x5_floors(tmp_path):
+    from types import SimpleNamespace
+
+    from sokoban_rl.cli import _agent_factory
+
+    small, big = tmp_path / "small" / "s2_seed0", tmp_path / "big"
+    for d in (small, big):
+        d.mkdir(parents=True)
+        torch.save(QNet().state_dict(), d / "best.pt")
+
+    def args(**kw):
+        base = dict(agent="dqn", model=None, models_dir=str(tmp_path / "small"), seed=0,
+                    big_model=str(big / "best.pt"), mask=True)
+        return SimpleNamespace(**{**base, **kw})
+
+    lv5 = generate_split(1, 1, size=5, n_boxes=1, min_len=3, max_len=9)[0][0]
+    lv7 = generate_split(1, 1, size=7, n_boxes=1, min_len=3, max_len=9)[0][0]
+    pick = _agent_factory(args())
+    assert pick(lv7) is not pick(lv5)  # the 7x7 board gets its own model
+    assert pick(lv5) is pick(lv5)  # models are loaded once
+    same = _agent_factory(args(mask=False))
+    assert same(lv7) is same(lv5)  # the big model needs masking, so without it stage 2 plays everything
+    named = _agent_factory(args(model=str(small / "best.pt")))
+    assert named(lv7) is named(lv5)  # an explicit --model wins
+    gone = _agent_factory(args(big_model=str(tmp_path / "missing.pt")))
+    assert gone(lv7) is gone(lv5)  # no big model on disk: fall back to stage 2

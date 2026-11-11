@@ -26,16 +26,14 @@ Evidence that this is the main cause: skipping wasted moves at play time, with n
 raises validation success for every model, e.g. stage 2 model 82 -> 93 % (4x4 floor) and
 29 -> 39 % (5x5 floor); stage 5 model 41 -> 67 % (4x4) and 35 -> 45 % (5x5).
 
-Done: `--mask` (play time) lifts the 3 stage 2 runs from 75.8 to 89.2 % test. Training with `--mask` is running (models_mask/s5_seed0, 2026-11-11 evening).
-Original proposal: treat wasted moves as unavailable (invalid-action masking) both when acting and in
-the Q target (max over real moves only), as an opt-in training flag so earlier results stay
-reproducible. Then retrain stage 5 or 6 and compare on the same test sets.
+Done (2026-11-12): `--mask` is an opt-in flag for play time and training; earlier results stay
+reproducible. At play time it lifts the 3 stage 2 runs from 75.8 to 89.2 % test. Training stage 5
+with `--mask` (400k steps from the seed 2 Double DQN model) gives 85.5 % test, and 83 % on the 5x5
+floor where stage 2 gets 27-42 %. The game now plays 5x5-floor levels with it (`--big-model`).
+Masking only at play time was not enough for the bigger boards; masking in training was.
 
 ## 4. Optional follow-ups
 
-- **Stuck-move fix:** 50 of 59 validation failures are the agent repeating one move into a
-  wall. Try skipping actions that leave the board unchanged at play time; measure on
-  validation only and report it as a post-hoc change.
 - **Harder levels:** generated levels are mostly 3–7 steps (almost none above 9).
 - **GPU:** PyTorch here is the CPU build; the RTX 3050 needs the CUDA build plus a
   `--device` option in `dqn.py`. Time it before relying on it.
