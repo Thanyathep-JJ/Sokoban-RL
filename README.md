@@ -42,7 +42,18 @@ sokoban-rl evaluate --stage 2 --splits val test --agents random bfs dqn --seeds 
 sokoban-rl play --file data/example.txt --agent qtable --gif results/example.gif
 sokoban-rl play --split test --idx 5 --agent dqn --gif results/test5.gif
 sokoban-rl play --file my_level.txt --agent dqn        # draw your own 6x6 level
+
+# Challenge: you play first, then the AI plays the same level and both are compared with BFS
+sokoban-rl challenge                                   # random test level
+sokoban-rl challenge --split test --idx 11             # a specific level (replay one you lost)
+sokoban-rl challenge --file my_level.txt --agent qtable
 ```
+
+In `challenge`, move with **W A S D** or the arrow keys, **Z** undoes, **R** restarts, **G** gives
+up (asks to confirm, then shows the AI's answer), **Q** quits. When you win or give up it shows
+your moves, the AI's moves and the shortest BFS answer side by side. Bumping into a wall is
+not counted as a move for you, but it is counted for the AI, which is how its stuck-on-a-wall
+failures show up.
 
 `python -m sokoban_rl ...` works too. Training flags: `--double` (Double DQN),
 `--init <weights>` (warm start), `--threads N`, `--eval-every N`; see `sokoban-rl train -h`.
@@ -61,6 +72,7 @@ src/sokoban_rl/
   dqn.py         stages 2-3: network, replay buffer, training loop
   policies.py    random / BFS / Q-table policies
   evaluation.py  success %, steps vs BFS, deadlock %
+  human.py       play a level yourself and compare with the AI (`challenge`)
   render.py      terminal animation + GIF
   plotting.py    training curves
   cli.py         the `sokoban-rl` command

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import random
 import sys
 import time
 from pathlib import Path
@@ -14,7 +15,6 @@ from sokoban_rl.game import (
     ACTION_CHARS,
     ACTION_NAMES_TH,
     MAX_STEPS,
-    LevelError,
     level_to_lines,
     load_level_file,
     load_levels,
@@ -125,22 +125,23 @@ def cmd_plot(args) -> None:
     print(f"บันทึกกราฟที่ {plot_training(args.logs, args.out)}")
 
 
-def cmd_play(args) -> None:
-    from sokoban_rl.evaluation import run_episode
-    from sokoban_rl.render import animate_terminal, save_gif
-    from sokoban_rl.solver import solve
-
-    # 1) receive level
+def _load_level(args):
+    """Level from --file, or from --split (index --idx; a random one when --idx is not given)."""
     try:
         if args.file:
-            level = load_level_file(args.file)
-        else:
-            levels = load_levels(Path(args.data_dir) / f"s{args.stage}_{args.split}.json")
-            level = levels[args.idx]
-    except (LevelError, OSError, IndexError) as e:
+            return load_level_file(args.file)
+        levels = load_levels(Path(args.data_dir) / f"s{args.stage}_{args.split}.json")
+        if args.idx is None:
+            args.idx = random.randrange(len(levels))
+        return levels[args.idx]
+    except (ValueError, OSError, IndexError) as e:  # LevelError is a ValueError
         sys.exit(f"อ่านด่านไม่ได้: {e}")
 
-    # 2) validate: BFS must be able to solve it
+
+def _solve_or_exit(level) -> str:
+    """BFS must be able to solve the level; returns the shortest solution and stores it."""
+    from sokoban_rl.solver import solve
+
     best = solve(level)
     if best is None:
         print("\n".join(level_to_lines(level)))
@@ -148,32 +149,45 @@ def cmd_play(args) -> None:
     if not best:
         sys.exit("กล่องอยู่บนเป้าครบแล้ว ไม่ต้องเดิน กรุณาส่งด่านใหม่")
     level.bfs_solution = best
-    if len(best) > MAX_STEPS:
-        print(f"คำเตือน: ด่านนี้ต้องใช้ {len(best)} ก้าว เกินขีดจำกัด {MAX_STEPS} ก้าว")
-    elif len(best) > 15:
-        print("คำเตือน: ด่านนี้ยากกว่าช่วงที่ AI ถูกฝึกมา (คำตอบสั้นสุดเกิน 15 ก้าว)")
+    return best
 
-    # 3-4) convert + play
+
+def _make_policy(args, level):
     if args.agent == "dqn":
         from sokoban_rl.dqn import DQNPolicy, load_model
 
         model = args.model or f"{args.models_dir}/s{args.stage}_seed{args.seed}/best.pt"
         if not Path(model).exists():
             sys.exit(f"ไม่พบโมเดล {model} (เทรนก่อนด้วย: sokoban-rl train --stage {args.stage})")
-        policy = DQNPolicy(load_model(model))
-    elif args.agent == "qtable":
+        return DQNPolicy(load_model(model))
+    if args.agent == "qtable":
         from sokoban_rl.policies import QTablePolicy
         from sokoban_rl.qlearning import train_q
 
-        policy = QTablePolicy(train_q(level, seed=args.seed))  # stage 1 learns this one level
-    elif args.agent == "bfs":
+        return QTablePolicy(train_q(level, seed=args.seed))  # stage 1 learns this one level
+    if args.agent == "bfs":
         from sokoban_rl.policies import BFSPolicy
 
-        policy = BFSPolicy()
-    else:
-        from sokoban_rl.policies import RandomPolicy
+        return BFSPolicy()
+    from sokoban_rl.policies import RandomPolicy
 
-        policy = RandomPolicy(args.seed)
+    return RandomPolicy(args.seed)
+
+
+def cmd_play(args) -> None:
+    from sokoban_rl.evaluation import run_episode
+    from sokoban_rl.render import animate_terminal, save_gif
+
+    # 1-2) receive level, validate it
+    level = _load_level(args)
+    best = _solve_or_exit(level)
+    if len(best) > MAX_STEPS:
+        print(f"คำเตือน: ด่านนี้ต้องใช้ {len(best)} ก้าว เกินขีดจำกัด {MAX_STEPS} ก้าว")
+    elif len(best) > 15:
+        print("คำเตือน: ด่านนี้ยากกว่าช่วงที่ AI ถูกฝึกมา (คำตอบสั้นสุดเกิน 15 ก้าว)")
+
+    # 3-4) convert + play
+    policy = _make_policy(args, level)
     res = run_episode(level, policy)
 
     # 5) show result
@@ -192,6 +206,34 @@ def cmd_play(args) -> None:
         print(f"แพ้ · {why} · BFS ทำได้ใน {len(best)} ก้าว")
     if args.gif:
         print(f"บันทึก GIF ที่ {save_gif(level, res.actions, args.gif)}")
+
+
+def cmd_challenge(args) -> None:
+    """You play first; then the AI plays the same level and the two are compared with BFS."""
+    from sokoban_rl.evaluation import run_episode
+    from sokoban_rl.human import build_report, enable_ansi, make_key_reader, play_interactive
+    from sokoban_rl.render import animate_terminal
+
+    level = _load_level(args)
+    best = _solve_or_exit(level)
+    policy = _make_policy(args, level)  # fail early if the model is missing, before you start playing
+    if not args.file:
+        level.name = f"{args.split} #{args.idx}"
+    if sys.stdout.isatty():
+        enable_ansi()
+
+    human = play_interactive(level, make_key_reader())
+    if human.outcome == "quit":
+        print("ออกจากเกม")
+        return
+
+    agent = run_episode(level, policy)
+    if not args.no_anim:
+        print(f"\nตอนนี้ให้ AI ({args.agent}) เล่นด่านเดียวกัน...\n")
+        animate_terminal(level, agent.actions, delay=args.delay)
+    print("\n".join(build_report(level, human, args.agent, agent, best)))
+    if not args.file:
+        print(f"\nเล่นด่านนี้ซ้ำ: sokoban-rl challenge --split {args.split} --idx {args.idx}")
 
 
 # --- parser ----------------------------------------------------------------------------------
@@ -258,6 +300,20 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--no-anim", action="store_true")
     s.add_argument("--gif")
     s.set_defaults(func=cmd_play)
+
+    s = sub.add_parser("challenge", help="play a level yourself, then compare with the AI and BFS")
+    src = s.add_mutually_exclusive_group()
+    src.add_argument("--file", help="level drawn with # @ $ . in a text file")
+    src.add_argument("--split", choices=("train", "val", "test"), default="test")
+    s.add_argument("--idx", type=int, help="level index within --split (random if omitted)")
+    s.add_argument("--stage", type=int, choices=(2, 3), default=2)
+    s.add_argument("--agent", choices=("dqn", "qtable"), default="dqn")
+    s.add_argument("--seed", type=int, default=0, help="which trained model / Q-table seed")
+    s.add_argument("--model")
+    s.add_argument("--models-dir", default="models")
+    s.add_argument("--delay", type=float, default=0.3)
+    s.add_argument("--no-anim", action="store_true")
+    s.set_defaults(func=cmd_challenge)
     return p
 
 
