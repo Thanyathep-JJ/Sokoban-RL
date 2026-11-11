@@ -18,17 +18,22 @@ from sokoban_rl.game import ACTION_CHARS, Level, load_levels, move, save_levels
 # Single-box levels rarely need more than 8-9 moves, so later parts add a box.
 # Hidden modes are not shown in the window's mode bar but still work with --difficulty.
 DIFFICULTIES = {
-    "easy": {"label": "ง่าย", "seed": 7001, "parts": [
-        {"size": 6, "boxes": 1, "min_len": 3, "max_len": 9, "count": 20, "pool": 800},
+    # one mode per floor size, 1 box (sizes are whole boards: 5 = 3x3 floor, 6 = 4x4, 7 = 5x5).
+    # "tag" goes into the level names, so saved scores from older level sets never mix in.
+    "easy": {"label": "ง่าย", "seed": 7201, "tag": "v3", "parts": [
+        {"size": 5, "boxes": 1, "min_len": 3, "max_len": 9, "count": 20, "pool": 30},
     ]},
-    "medium": {"label": "ปานกลาง", "seed": 7002, "parts": [
-        {"size": 7, "boxes": 1, "min_len": 7, "max_len": 12, "count": 6, "pool": 1500},
-        {"size": 7, "boxes": 2, "min_len": 9, "max_len": 16, "count": 14, "pool": 1500},
+    "medium": {"label": "ปานกลาง", "seed": 7202, "tag": "v3", "parts": [
+        {"size": 6, "boxes": 1, "min_len": 3, "max_len": 12, "count": 20, "pool": 400},
     ]},
-    "hard": {"label": "ยาก", "seed": 7003, "hidden": True, "parts": [
+    "hard": {"label": "ยาก", "seed": 7203, "tag": "v3", "parts": [
+        {"size": 7, "boxes": 1, "min_len": 4, "max_len": 12, "count": 20, "pool": 800},
+    ]},
+    # kept for later, hidden from the window: more boxes (open with --difficulty two_boxes / expert)
+    "two_boxes": {"label": "ยาก 2 ลัง", "seed": 7003, "hidden": True, "parts": [
         {"size": 7, "boxes": 2, "min_len": 8, "max_len": 14, "count": 20, "pool": 500},
     ]},
-    "expert": {"label": "ยากมาก", "seed": 7004, "hidden": True, "parts": [
+    "expert": {"label": "ยากมาก 3 ลัง", "seed": 7004, "hidden": True, "parts": [
         {"size": 7, "boxes": 3, "min_len": 15, "max_len": 40, "count": 20, "pool": 600},
     ]},
 }
@@ -47,9 +52,9 @@ def pushes(level: Level) -> int:
     return n
 
 
-def difficulty_score(level: Level) -> tuple[int, int, int]:
-    """Harder = more boxes, then a longer shortest solution, then more pushes in it."""
-    return len(level.boxes), level.bfs_len or 0, pushes(level)
+def difficulty_score(level: Level) -> tuple[int, int, int, int]:
+    """Harder = more boxes, then a bigger board, then a longer shortest solution, then more pushes."""
+    return len(level.boxes), level.width * level.height, level.bfs_len or 0, pushes(level)
 
 
 def pick_progression(pool: list[Level], count: int) -> list[Level]:
@@ -81,15 +86,18 @@ def _training_keys(data_dir: str | Path) -> set[str]:
 def difficulty_levels(name: str, data_dir: str | Path = "data") -> list[Level]:
     """The level set of one difficulty, easiest first. Generated once (seconds), then read from a cache."""
     spec = DIFFICULTIES[name]
-    count = sum(part["count"] for part in spec["parts"])
+    prefix = f"{name}_{spec['tag']}" if spec.get("tag") else name
+    # what the set must contain: (box count, board size) per level, from the spec
+    expected = sorted((pt["boxes"], pt["size"]) for pt in spec["parts"] for _ in range(pt["count"]))
     path = Path(data_dir) / f"play_{name}.json"
     if path.exists():
         try:
             levels = load_levels(path)
-            if len(levels) == count:
+            if (sorted((len(lv.boxes), lv.width) for lv in levels) == expected
+                    and all(lv.name.startswith(prefix + "_") for lv in levels)):
                 return levels
         except (OSError, ValueError):
-            pass  # damaged or outdated cache: build it again
+            pass  # damaged cache, or one made for a different spec: build it again
     from sokoban_rl.levelgen import generate_split
 
     exclude = _training_keys(data_dir)
@@ -101,7 +109,7 @@ def difficulty_levels(name: str, data_dir: str | Path = "data") -> list[Level]:
         levels += pick_progression(pool, part["count"])
     levels.sort(key=difficulty_score)
     for i, lv in enumerate(levels, start=1):
-        lv.name = f"{name}_{i:02d}"
+        lv.name = f"{prefix}_{i:02d}"
     path.parent.mkdir(parents=True, exist_ok=True)
     save_levels(levels, path)
     return levels

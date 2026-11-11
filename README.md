@@ -49,7 +49,7 @@ sokoban-rl play --file my_level.txt --agent dqn        # draw your own 6x6 level
 
 # Graphical game (retro pixel-art window): level after level, score, timer, saved progress
 sokoban-rl gui                                         # starts in easy mode at your first unsolved stage
-sokoban-rl gui --difficulty medium                     # easy | medium
+sokoban-rl gui --difficulty hard                       # easy | medium | hard
 sokoban-rl gui --level 150 --model models_double/s2_seed2/best.pt
 sokoban-rl gui --file my_level.txt
 
@@ -111,14 +111,16 @@ models/ results/ generated artifacts (git-ignored)
 - **Deadlocks:** the RL environment ends an episode only on a corner deadlock, and all results
   use that rule. The human games use the stronger `deadlock.py` (boxes on dead squares along a
   wall, frozen pairs and 2x2 blocks) to warn you early; a test checks it never flags a solvable state.
-- **Difficulty in `gui`** (keys 1-2): two modes of 20 stages each that get harder stage by stage.
-  Easy: 6x6, 1 box, shortest solution 3 -> 9 moves. Medium: 7x7, stages 1-6 with 1 box (7 -> 12
-  moves), then stages 7-20 with 2 boxes (9 -> 16 moves). Each part is picked from a large
-  generated pool so solution lengths climb evenly (ties: more pushes = harder), and no stage is
-  shaped like any level the AI trains or is tested on. Sets are cached in `data/play_*.json`.
-  Hard (2 boxes) and expert (3 boxes) modes exist but are hidden for now (`--difficulty hard`).
-  The window compares you with the AI model for the level's box count: stage 2 (1 box) or
-  stage 3 (2 boxes).
+- **Difficulty in `gui`** (keys 1-3): three modes of 20 stages, one box, one floor size each:
+  easy = 3x3 floor (5x5 board with walls), medium = 4x4 (6x6), hard = 5x5 (7x7). Within a mode
+  the shortest solution grows stage by stage (ties: more pushes = harder). Stages are picked
+  from a large generated pool and none is shaped like a level the AI trains or is tested on.
+  Sets are cached in `data/play_*.json`. Modes with 2 and 3 boxes exist but are hidden for now
+  (`--difficulty two_boxes` / `expert`).
+- **Stage 5 (the game's AI):** one box on 5x5, 6x6 and 7x7 boards (10 % / 45 % / 45 % of each
+  split, because the 3x3 floor has only ~180 distinct levels), warm-started from the seed 2
+  Double DQN model. A 2-box run (stage 3) stayed at 1-4 % validation, below random (14 %), so it
+  was stopped; stages 3 and 4 can still be generated with `make-levels`.
 - **Scoring in `gui`:** 100 × shortest ÷ your moves per level (100 = optimal, 0 = gave up);
   stars 3 / 2 / 1 for optimal / ≤ 1.5× / solved. Best results are saved in `results/progress_*.json`.
 - **Known limits:** small maps only; the greedy DQN can get stuck repeating a move (see Results).

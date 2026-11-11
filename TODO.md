@@ -5,15 +5,13 @@
 Double DQN, 500k steps: best validation 82 %, test 81.0 % (original seed 2: 77 % / 71.5 %).
 Added to the README as an extra row; the original table is unchanged.
 
-## 2. Hard and expert game modes (kept for later)
+## 2. Game modes with 2 and 3 boxes (kept for later)
 
-The modes exist in `campaign.DIFFICULTIES` but are hidden from the window
-(`sokoban-rl gui --difficulty hard` / `expert` still opens them).
-- Hard (7x7, 2 boxes, 8-14 moves) uses the stage 3 model, which is being trained now.
-- Expert (7x7, 3 boxes, 15-22 moves) needs a stage 4 model. The levels exist
-  (`make-levels --stage 4`), but training was stopped on request. To run it:
-  `sokoban-rl train --stage 4 --seed 0 --double --init models_double/s2_seed2/best.pt --eps-start 0.5 --eps-decay 200000 --steps 600000`
-  Expect it to be weak: only 24 of 1,000 stage 4 training levels need 15+ moves.
+`two_boxes` and `expert` exist in `campaign.DIFFICULTIES` but are hidden from the window
+(`sokoban-rl gui --difficulty two_boxes` still opens them). There is no working AI for them yet:
+a stage 3 (2-box) DQN run reached only 1-4 % validation after 350k steps (random: 14 %) and was
+stopped. Ideas before trying again: a curriculum from very short 2-box levels, a smaller board
+(4x4 floor), or reward shaping for moving a box closer to a free target.
 
 ## 3. Optional follow-ups
 

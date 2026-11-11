@@ -81,13 +81,21 @@ def generate_split(
     max_len: int = 15,
     exclude: set[str] | None = None,
     prefix: str = "lv",
+    max_tries: int = 2_000_000,
 ) -> tuple[list[Level], dict]:
-    """Return ``count`` unique levels with optimal length in [min_len, max_len]."""
+    """Return ``count`` unique levels with optimal length in [min_len, max_len].
+
+    Small boards have only a few hundred distinct levels, so give up after ``max_tries``
+    instead of searching forever.
+    """
     rng = np.random.default_rng(seed)
     keys = set(exclude or ())
     levels: list[Level] = []
     stats = {"tried": 0, "duplicates": 0}
     while len(levels) < count:
+        if stats["tried"] >= max_tries:
+            raise RuntimeError(f"only {len(levels)} of {count} unique levels found for a {size}x{size} board "
+                               f"with {n_boxes} box(es) and {min_len}-{max_len} moves; ask for fewer")
         stats["tried"] += 1
         lv = _random_level(rng, size, n_boxes)
         if lv is None:
@@ -106,22 +114,37 @@ def generate_split(
     return levels, stats
 
 
-def build_stage(out_dir, size: int, n_boxes: int, stage: int, min_len: int = 3,
-                max_len: int = 15, log=print, exclude: set[str] | None = None) -> dict[str, list[Level]]:
-    """Generate train/val/test for one stage and write ``s{stage}_{split}.json``."""
+def build_stage(out_dir, size: int | tuple[int, ...], n_boxes: int, stage: int, min_len: int = 3,
+                max_len: int = 15, log=print, exclude: set[str] | None = None,
+                weights: tuple[float, ...] | None = None) -> dict[str, list[Level]]:
+    """Generate train/val/test for one stage and write ``s{stage}_{split}.json``.
+
+    ``size`` may be several board sizes; each split is then shared between them by ``weights``.
+    """
     from pathlib import Path
 
+    sizes = (size,) if isinstance(size, int) else tuple(size)
+    weights = weights or tuple(1.0 for _ in sizes)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     used: set[str] = set(exclude or ())  # e.g. the game levels, so the AI never trains on them
     result = {}
     for split, (seed, count) in SPLITS.items():
-        levels, stats = generate_split(count, seed + stage, size, n_boxes, min_len, max_len,
-                                       exclude=used, prefix=split)
-        used |= {canonical_key(lv) for lv in levels}
+        shares = [int(count * w / sum(weights)) for w in weights]
+        shares[-1] += count - sum(shares)
+        levels, duplicates = [], 0
+        for k, (sz, n) in enumerate(zip(sizes, shares, strict=True)):
+            part, stats = generate_split(n, seed + stage + 17 * k, sz, n_boxes, min_len, max_len,
+                                         exclude=used, prefix=split)
+            used |= {canonical_key(lv) for lv in part}
+            levels += part
+            duplicates += stats["duplicates"]
+        if len(sizes) > 1:
+            for i, lv in enumerate(levels):
+                lv.name = f"{split}_{i:04d}"
         save_levels(levels, out / f"s{stage}_{split}.json")
         hist = np.bincount([lv.bfs_len for lv in levels], minlength=max_len + 1)
-        log(f"{split:5s}: {len(levels)} levels, dropped {stats['duplicates']} duplicates, "
-            f"bfs_len histogram {dict(enumerate(hist.tolist()))}")
+        log(f"{split:5s}: {len(levels)} levels (sizes {dict(zip(sizes, shares, strict=True))}), "
+            f"dropped {duplicates} duplicates, bfs_len histogram {dict(enumerate(hist.tolist()))}")
         result[split] = levels
     return result
