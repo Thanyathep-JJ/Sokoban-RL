@@ -117,10 +117,15 @@ models/ results/ generated artifacts (git-ignored)
   from a large generated pool and none is shaped like a level the AI trains or is tested on.
   Sets are cached in `data/play_*.json`. Modes with 2 and 3 boxes exist but are hidden for now
   (`--difficulty two_boxes` / `expert`).
-- **Stage 5 (the game's AI):** one box on 5x5, 6x6 and 7x7 boards (10 % / 45 % / 45 % of each
-  split, because the 3x3 floor has only ~180 distinct levels), warm-started from the seed 2
-  Double DQN model. A 2-box run (stage 3) stayed at 1-4 % validation, below random (14 %), so it
-  was stopped; stages 3 and 4 can still be generated with `make-levels`.
+- **Stage 5 (mixed board sizes, not used by default):** one box on 5x5, 6x6 and 7x7 boards
+  (10 % / 45 % / 45 % of each split, because the 3x3 floor has only ~180 distinct levels), trained
+  300k steps from the seed 2 Double DQN model. Test success 47.5 % (random 31.5 %). It is better
+  than the stage 2 model only on the 5x5 floor (41 % vs 31 %) and clearly worse on 3x3 and 4x4
+  (50 % vs 70 %, 53 % vs 89 %), so the game keeps using the stage 2 model; try stage 5 with
+  `--model models/s5_seed0/best.pt`. A follow-up stage 6 run (7x7 board only, warm-started from stage 5,
+  300k steps) failed: validation peaked at 24 % after 50k steps, then fell to 7-9 % while the training
+  return turned negative, and its final test success (14.5 %) is below random (18.5 %). Not used. A 2-box run (stage 3) stayed at 1-4 % validation, below
+  random (14 %), so it was stopped; stages 3 and 4 can still be generated with `make-levels`.
 - **Scoring in `gui`:** 100 × shortest ÷ your moves per level (100 = optimal, 0 = gave up);
   stars 3 / 2 / 1 for optimal / ≤ 1.5× / solved. Best results are saved in `results/progress_*.json`.
 - **Known limits:** small maps only; the greedy DQN can get stuck repeating a move (see Results).
@@ -171,6 +176,22 @@ the plan's 15–30 min estimate was too optimistic.
   3 seeds, 50 are the agent repeating one move into a wall and 9 are a two-move
   back-and-forth. Because a wall bump leaves the board unchanged, a deterministic greedy
   policy repeats the same choice until the 50-step limit.
+
+**Post-hoc: skipping moves that change nothing.** The loop failure above comes from the network
+rating a wall bump as good as (or better than) the best real move: the true difference is only
+about 0.1-0.2 points, smaller than its error. Forbidding moves that leave the board unchanged at
+play time (`--mask`, no retraining) lifts the same three `best.pt` files:
+
+| Seeds 0, 1, 2 (original runs) | Validation | Test (200) |
+|---|---|---|
+| Greedy, as in the table above | 80.3 ± 2.4 % | 75.8 ± 3.2 % |
+| Greedy, wasted moves forbidden (`--mask`) | 89.7 ± 1.7 % | 89.2 ± 0.2 % |
+
+The idea came from looking at the validation failures, so treat the validation gain as optimistic;
+the test set was evaluated once, after the idea was fixed. The table above is unchanged and is
+still the plain greedy result. `play`, `challenge` and `evaluate` take `--mask`; the `gui` game
+uses it by default (`--no-mask` turns it off). `train --mask` also removes such moves from
+exploration and from the Q target (max over real moves only).
 
 | Optimal win (test #12, 6 steps) | Win with detour (test #14, 11 vs 7) | Loss: stuck on a wall (test #11) |
 |---|---|---|

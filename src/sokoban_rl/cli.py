@@ -24,7 +24,9 @@ from sokoban_rl.game import (
 # stage 5: 1 box on boards of 5x5, 6x6 and 7x7 (floors 3x3 to 5x5), used by the game's modes
 STAGE_DEFAULTS = {2: {"size": 6, "boxes": 1, "max_len": 15}, 3: {"size": 7, "boxes": 2, "max_len": 15},
                   4: {"size": 7, "boxes": 3, "max_len": 25},
-                  5: {"size": (5, 6, 7), "boxes": 1, "max_len": 15, "min_len": 2, "weights": (1, 4.5, 4.5)}}
+                  5: {"size": (5, 6, 7), "boxes": 1, "max_len": 15, "min_len": 2, "weights": (1, 4.5, 4.5)},
+                  # stage 6: 1 box, 7x7 board only (5x5 floor), the size the stage 2 model is weakest on
+                  6: {"size": 7, "boxes": 1, "max_len": 15}}
 
 
 # --- helpers ---------------------------------------------------------------------------------
@@ -91,7 +93,7 @@ def cmd_train(args) -> None:
     from sokoban_rl.dqn import DQNConfig, train
 
     cfg = DQNConfig(stage=args.stage, seed=args.seed, steps=args.steps, double=args.double,
-                    init=args.init, eps_start=args.eps_start, eps_decay_steps=args.eps_decay,
+                    init=args.init, mask=args.mask, eps_start=args.eps_start, eps_decay_steps=args.eps_decay,
                     eval_every=args.eval_every, learn_start=args.learn_start,
                     lr=args.lr, threads=args.threads, data_dir=args.data_dir, out_dir=args.out_dir)
     out = train(cfg)
@@ -116,7 +118,7 @@ def cmd_evaluate(args) -> None:
                 missing = [str(p) for p in paths if not p.exists()]
                 if missing:
                     sys.exit(f"ไม่พบโมเดล: {', '.join(missing)} (เทรนก่อนด้วย: sokoban-rl train)")
-                policies = [DQNPolicy(load_model(p)) for p in paths]
+                policies = [DQNPolicy(load_model(p), mask=args.mask) for p in paths]
             res = [evaluate(levels, p) for p in policies]
             rows.append((agent, split, len(levels), len(res),
                          _fmt([r["success_pct"] for r in res]),
@@ -173,7 +175,7 @@ def _make_policy(args, level):
         model = args.model or f"{args.models_dir}/s{args.stage}_seed{args.seed}/best.pt"
         if not Path(model).exists():
             sys.exit(f"ไม่พบโมเดล {model} (เทรนก่อนด้วย: sokoban-rl train --stage {args.stage})")
-        return DQNPolicy(load_model(model))
+        return DQNPolicy(load_model(model), mask=args.mask)
     if args.agent == "qtable":
         from sokoban_rl.policies import QTablePolicy
         from sokoban_rl.qlearning import train_q
@@ -246,10 +248,10 @@ def _agent_factory(args):
         from sokoban_rl.qlearning import train_q
 
         return lambda level: QTablePolicy(train_q(level, seed=args.seed))
-    # one model per box count: 1 box -> stage 5 (all board sizes; stage 2 if not trained yet),
-    # 2 boxes -> stage 3, 3 boxes -> stage 4
-    one_box = 5 if Path(f"{args.models_dir}/s5_seed{args.seed}/best.pt").exists() else 2
-    stage_for_boxes = {1: one_box, 2: 3, 3: 4}
+    # one model per box count: 1 box -> stage 2, 2 boxes -> stage 3, 3 boxes -> stage 4.
+    # (The mixed-size stage 5 model is weaker on 3x3 and 4x4 floors, so it is not picked
+    # automatically; use --model models/s5_seed0/best.pt to try it.)
+    stage_for_boxes = {1: 2, 2: 3, 3: 4}
     cache: dict[int, object] = {}
     warned: set[Path] = set()
 
@@ -271,7 +273,7 @@ def _agent_factory(args):
             else:
                 from sokoban_rl.dqn import DQNPolicy, load_model
 
-                cache[n] = DQNPolicy(load_model(path))
+                cache[n] = DQNPolicy(load_model(path), mask=args.mask)
         return cache[n]
 
     return dqn
@@ -343,7 +345,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("make-levels", help="generate train/val/test levels for a stage")
-    s.add_argument("--stage", type=int, choices=(2, 3, 4, 5), default=2)
+    s.add_argument("--stage", type=int, choices=(2, 3, 4, 5, 6), default=2)
     s.add_argument("--size", type=int)
     s.add_argument("--boxes", type=int)
     s.add_argument("--min-len", type=int, help="default: 3 (2 for stage 5)")
@@ -357,10 +359,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_q_learn)
 
     s = sub.add_parser("train", help="stage 2/3: train DQN")
-    s.add_argument("--stage", type=int, choices=(2, 3, 4, 5), default=2)
+    s.add_argument("--stage", type=int, choices=(2, 3, 4, 5, 6), default=2)
     s.add_argument("--seed", type=int, default=0)
     s.add_argument("--steps", type=int, default=300_000)
     s.add_argument("--double", action="store_true", help="use Double DQN targets")
+    s.add_argument("--mask", action="store_true",
+                   help="never choose or bootstrap from a move that changes nothing (wall bumps)")
     s.add_argument("--init", help="warm-start weights, e.g. models/s2_seed0/best.pt")
     s.add_argument("--eps-start", type=float, default=1.0)
     s.add_argument("--eps-decay", type=int, default=100_000)
@@ -372,13 +376,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_train)
 
     s = sub.add_parser("evaluate", help="compare random / bfs / dqn on level splits")
-    s.add_argument("--stage", type=int, choices=(2, 3, 4, 5), default=2)
+    s.add_argument("--stage", type=int, choices=(2, 3, 4, 5, 6), default=2)
     s.add_argument("--splits", nargs="+", default=["val", "test"], choices=("train", "val", "test"))
     s.add_argument("--agents", nargs="+", default=["random", "bfs", "dqn"],
                    choices=("random", "bfs", "dqn"))
     s.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
     s.add_argument("--models-dir", default="models")
     s.add_argument("--out-dir", default="results")
+    s.add_argument("--mask", action="store_true", help="the AI never picks a move that changes nothing")
     s.set_defaults(func=cmd_evaluate)
 
     s = sub.add_parser("plot", help="plot training curves from log.csv files")
@@ -391,7 +396,7 @@ def build_parser() -> argparse.ArgumentParser:
     src.add_argument("--file", help="level drawn with # @ $ . in a text file")
     src.add_argument("--split", choices=("train", "val", "test"), default="test")
     s.add_argument("--idx", type=int, default=0, help="level index within --split")
-    s.add_argument("--stage", type=int, choices=(2, 3, 4, 5), default=2)
+    s.add_argument("--stage", type=int, choices=(2, 3, 4, 5, 6), default=2)
     s.add_argument("--agent", choices=("dqn", "qtable", "bfs", "random"), default="dqn")
     s.add_argument("--seed", type=int, default=0)
     s.add_argument("--model")
@@ -399,6 +404,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--delay", type=float, default=0.3)
     s.add_argument("--no-anim", action="store_true")
     s.add_argument("--gif")
+    s.add_argument("--mask", action="store_true", help="the AI never picks a move that changes nothing")
     s.set_defaults(func=cmd_play)
 
     s = sub.add_parser("watch", help="live progress bar for a running training (reads its log)")
@@ -412,7 +418,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="mode to start in: easy, medium or hard (keys 1-3 in the window); "
                         "two_boxes and expert are hidden extras")
     s.add_argument("--file", help="play one level drawn in a text file")
-    s.add_argument("--stage", type=int, choices=(2, 3, 4, 5), default=2)
+    s.add_argument("--stage", type=int, choices=(2, 3, 4, 5, 6), default=2)
     s.add_argument("--level", type=int, help="start at this level number (1 = easiest); default: first unsolved")
     s.add_argument("--agent", choices=("dqn", "qtable", "none"), default="dqn")
     s.add_argument("--seed", type=int, default=0, help="which trained model to compare with")
@@ -420,6 +426,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--models-dir", default="models")
     s.add_argument("--progress-dir", default="results", help="where your scores are saved")
     s.add_argument("--reset", action="store_true", help="forget all saved scores")
+    s.add_argument("--no-mask", dest="mask", action="store_false",
+                   help="let the AI waste moves on walls (it is stronger without them)")
     s.set_defaults(func=cmd_gui, idx=None, split="test")
 
     s = sub.add_parser("challenge", help="play a level yourself, then compare with the AI and BFS")
@@ -427,13 +435,14 @@ def build_parser() -> argparse.ArgumentParser:
     src.add_argument("--file", help="level drawn with # @ $ . in a text file")
     src.add_argument("--split", choices=("train", "val", "test"), default="test")
     s.add_argument("--idx", type=int, help="level index within --split (random if omitted)")
-    s.add_argument("--stage", type=int, choices=(2, 3, 4, 5), default=2)
+    s.add_argument("--stage", type=int, choices=(2, 3, 4, 5, 6), default=2)
     s.add_argument("--agent", choices=("dqn", "qtable"), default="dqn")
     s.add_argument("--seed", type=int, default=0, help="which trained model / Q-table seed")
     s.add_argument("--model")
     s.add_argument("--models-dir", default="models")
     s.add_argument("--delay", type=float, default=0.3)
     s.add_argument("--no-anim", action="store_true")
+    s.add_argument("--mask", action="store_true", help="the AI never picks a move that changes nothing")
     s.set_defaults(func=cmd_challenge)
     return p
 

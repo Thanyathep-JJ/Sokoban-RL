@@ -16,7 +16,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from sokoban_rl.evaluation import evaluate
-from sokoban_rl.game import OBS_SIZE, Level, SokobanEnv, load_levels
+from sokoban_rl.game import OBS_SIZE, Level, SokobanEnv, load_levels, move
 
 
 @dataclass
@@ -36,10 +36,17 @@ class DQNConfig:
     target_update: int = 1_000
     eval_every: int = 10_000
     double: bool = False
+    mask: bool = False  # never pick (or bootstrap from) a move that leaves the board unchanged
     init: str | None = None  # warm-start weights (stage 2 -> stage 3)
     threads: int | None = None
     data_dir: str = "data"
     out_dir: str | None = None  # default: models/s{stage}_seed{seed}
+
+
+def valid_moves(level: Level, player, boxes) -> np.ndarray:
+    """4 booleans: which moves change the board (the rest walk into a wall or a blocked box)."""
+    ok = np.array([move(level, player, boxes, a)[:2] != (player, boxes) for a in range(4)])
+    return ok if ok.any() else np.ones(4, dtype=bool)
 
 
 class QNet(nn.Module):
@@ -68,23 +75,27 @@ class ReplayBuffer:
         self.action = np.zeros(capacity, np.int64)
         self.reward = np.zeros(capacity, np.float32)
         self.done = np.zeros(capacity, np.float32)
+        self.next_valid = np.ones((capacity, 4), bool)  # moves that change the board in next_obs
         self.capacity, self.size, self.pos = capacity, 0, 0
 
-    def add(self, obs, action, reward, next_obs, done) -> None:
+    def add(self, obs, action, reward, next_obs, done, next_valid=None) -> None:
         i = self.pos
+        self.next_valid[i] = True if next_valid is None else next_valid
         self.obs[i], self.next_obs[i] = obs, next_obs
         self.action[i], self.reward[i], self.done[i] = action, reward, done
         self.pos = (self.pos + 1) % self.capacity
         self.size = min(self.size + 1, self.capacity)
 
-    def sample(self, batch_size: int, rng: np.random.Generator):
+    def sample(self, batch_size: int, rng: np.random.Generator, with_mask: bool = False):
         idx = rng.integers(0, self.size, batch_size)
+        extra = (torch.from_numpy(self.next_valid[idx]),) if with_mask else ()
         return (
             torch.from_numpy(self.obs[idx].astype(np.float32)),
             torch.from_numpy(self.action[idx]),
             torch.from_numpy(self.reward[idx]),
             torch.from_numpy(self.next_obs[idx].astype(np.float32)),
             torch.from_numpy(self.done[idx]),
+            *extra,
         )
 
 
@@ -93,8 +104,9 @@ class DQNPolicy:
 
     name = "dqn"
 
-    def __init__(self, net: QNet):
+    def __init__(self, net: QNet, mask: bool = False):
         self.net = net.eval()
+        self.mask = mask  # skip moves that would change nothing
 
     def reset(self, level: Level) -> None:
         pass
@@ -102,7 +114,11 @@ class DQNPolicy:
     @torch.no_grad()
     def act(self, env: SokobanEnv) -> int:
         obs = torch.from_numpy(env.observation()).unsqueeze(0)
-        return int(self.net(obs).argmax(1).item())
+        q = self.net(obs)
+        if self.mask:
+            valid = torch.from_numpy(valid_moves(env.level, env.player, env.boxes)).unsqueeze(0)
+            q = q.masked_fill(~valid, float("-inf"))
+        return int(q.argmax(1).item())
 
 
 def load_model(path: str | Path) -> QNet:
@@ -149,14 +165,19 @@ def train(cfg: DQNConfig, log=print) -> Path:
 
     for t in range(1, cfg.steps + 1):
         eps = max(cfg.eps_end, cfg.eps_start - (cfg.eps_start - cfg.eps_end) * t / cfg.eps_decay_steps)
+        valid = valid_moves(env.level, env.player, env.boxes) if cfg.mask else None
         if rng.random() < eps:
-            action = int(rng.integers(4))
+            action = int(rng.choice(np.flatnonzero(valid))) if cfg.mask else int(rng.integers(4))
         else:
             with torch.no_grad():
-                action = int(net(torch.from_numpy(obs).unsqueeze(0)).argmax(1).item())
+                q_now = net(torch.from_numpy(obs).unsqueeze(0))
+                if cfg.mask:
+                    q_now = q_now.masked_fill(~torch.from_numpy(valid).unsqueeze(0), float("-inf"))
+                action = int(q_now.argmax(1).item())
 
         next_obs, reward, done, truncated, _ = env.step(action)
-        buffer.add(obs, action, reward, next_obs, float(done))  # truncation is NOT terminal
+        next_valid = valid_moves(env.level, env.player, env.boxes) if cfg.mask else None
+        buffer.add(obs, action, reward, next_obs, float(done), next_valid)  # truncation is NOT terminal
         ep_return += reward
         if done or truncated:
             returns.append(ep_return)
@@ -166,13 +187,19 @@ def train(cfg: DQNConfig, log=print) -> Path:
             obs = next_obs
 
         if t >= cfg.learn_start and t % cfg.train_freq == 0:
-            s, a, r, s2, d = buffer.sample(cfg.batch_size, rng)
+            s, a, r, s2, d, *rest = buffer.sample(cfg.batch_size, rng, with_mask=cfg.mask)
             with torch.no_grad():
                 if cfg.double:
-                    best_a = net(s2).argmax(1, keepdim=True)
+                    q_online = net(s2)
+                    if rest:  # only moves that change the board count when looking ahead
+                        q_online = q_online.masked_fill(~rest[0], float("-inf"))
+                    best_a = q_online.argmax(1, keepdim=True)
                     next_q = target(s2).gather(1, best_a).squeeze(1)
                 else:
-                    next_q = target(s2).max(1).values
+                    q_target = target(s2)
+                    if rest:
+                        q_target = q_target.masked_fill(~rest[0], float("-inf"))
+                    next_q = q_target.max(1).values
                 y = r + cfg.gamma * (1.0 - d) * next_q
             q = net(s).gather(1, a.unsqueeze(1)).squeeze(1)
             loss = F.smooth_l1_loss(q, y)
@@ -185,7 +212,7 @@ def train(cfg: DQNConfig, log=print) -> Path:
             target.load_state_dict(net.state_dict())
 
         if t % cfg.eval_every == 0:
-            val = evaluate(val_levels, DQNPolicy(net))
+            val = evaluate(val_levels, DQNPolicy(net, mask=cfg.mask))
             net.train()
             avg_ret = float(np.mean(returns)) if returns else float("nan")
             minutes = (time.time() - start) / 60

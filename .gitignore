@@ -15,3 +15,4 @@ results/
 # local Claude Code config (personal permissions, unrelated skills)
 .claude/
 models_double/
+models_mask/
