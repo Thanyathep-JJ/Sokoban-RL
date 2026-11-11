@@ -242,6 +242,28 @@ Found on the game's levels, after the earlier results; the test splits were then
 `play`, `challenge` and `evaluate` take `--avoid-repeats`; `gui` uses it by default
 (`--allow-repeats` turns it off).
 
+**Training on the designed levels (stage 7): did not work.** `make-levels --stage 7` builds 1,000 /
+100 / 200 train / val / test levels from `designer.py` (10 % random-walk 5x5 board, 25 % 6x6,
+25 % 7x7 with 2 box lines, 40 % 7x7 with 3-4 box lines; none shares a puzzle with the game's
+levels). Training: `train --stage 7 --double --mask --init models_mask/s5_seed0/best.pt
+--eps-start 0.3 --steps 500000` (114 min). Validation (mask only) was 15 % after 10k steps and then
+fell to 3-8 % while the training return went from about -1.2 (30k steps) to about -4, so `best.pt` is the 10k-step
+checkpoint, i.e. almost the warm start. It is *worse* than the model it started from:
+
+| s7 test (200 levels), `--mask` + `--avoid-repeats` | all | 1 box line | 2 lines | 3 lines |
+|---|---|---|---|---|
+| Stage 5 model (`models_mask/s5_seed0`, no stage 7 training) | 53.0 % | 100 % | 69.1 % | 24.7 % |
+| After stage 7 training (`models_mask/s7_seed0`) | 42.0 % | 100 % | 53.6 % | 18.5 % |
+
+So a plain DQN with this reward, a 50k replay buffer and a 50-step limit did not learn to plan
+levels that need 3+ direction changes, and more training on them made it unlearn what it had. The
+game keeps the stage 5 model; `models_mask/s7_seed0` is not used. The numbers for the stage 5 model
+come from loading it on `s7_test.json` through the same evaluation code (`evaluate` looks for
+`models_mask/s7_seed0`, so it cannot score another model); the stage 7 row is
+`evaluate --stage 7 --models-dir models_mask --mask --avoid-repeats` (42.0 % test, 36.0 % val).
+The causes below are guesses, not tested: sparse reward with long plans, the buffer filling with
+failed episodes, or too high a learning rate for fine-tuning.
+
 | Optimal win (test #12, 6 steps) | Win with detour (test #14, 11 vs 7) | Loss: stuck on a wall (test #11) |
 |---|---|---|
 | ![](docs/test12.gif) | ![](docs/test14.gif) | ![](docs/test11.gif) |

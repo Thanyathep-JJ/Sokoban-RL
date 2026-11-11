@@ -152,3 +152,45 @@ def generate_designed(count: int, seed: int, size: int, walls: tuple[str, int, i
         levels.append(lv)
     raise RuntimeError(f"only {len(levels)} of {count} designed levels found for a {size}x{size} board; "
                        "loosen the limits")
+
+
+# Stage 7 (training data for the designed levels): a mix so the AI does not forget the easy ones.
+# (share of each split, board size, generator settings; None = the random-walk generator of levelgen)
+STAGE7_PARTS = (
+    (0.10, 5, None),
+    (0.25, 6, dict(walls=("random", 1, 3), far=0.5, min_len=5, max_len=12, min_lines=2, max_lines=3)),
+    (0.25, 7, dict(walls=("pieces", 1, 2), far=0.5, min_len=7, max_len=12, min_lines=2, max_lines=2)),
+    (0.40, 7, dict(walls=("pieces", 1, 3), far=0.6, min_len=9, max_len=16, min_lines=3, max_lines=4)),
+)
+
+
+def build_designed_stage(out_dir, stage: int = 7, parts=STAGE7_PARTS, exclude: set[str] | None = None,
+                         log=print) -> dict[str, list[Level]]:
+    """Write ``s{stage}_{train,val,test}.json`` from ``parts``; splits never share a puzzle."""
+    from pathlib import Path
+
+    from sokoban_rl.game import save_levels
+    from sokoban_rl.levelgen import SPLITS, generate_split
+
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    used: set[str] = set(exclude or ())
+    result = {}
+    for split, (seed, count) in SPLITS.items():
+        shares = [int(count * share) for share, _, _ in parts]
+        shares[-1] += count - sum(shares)
+        levels: list[Level] = []
+        for k, ((_, size, how), n) in enumerate(zip(parts, shares, strict=True)):
+            if how is None:
+                part, _ = generate_split(n, seed + stage + 17 * k, size, 1, 2, 15, exclude=used, prefix=split)
+            else:
+                part = generate_designed(n, seed + stage + 17 * k, size, exclude=used, prefix=split, **how)
+            used |= {canonical_key(lv) for lv in part} | {_shape_key(lv) for lv in part}
+            levels += part
+        for i, lv in enumerate(levels):
+            lv.name = f"{split}_{i:04d}"
+        save_levels(levels, out / f"s{stage}_{split}.json")
+        log(f"{split:5s}: {len(levels)} levels (sizes {[s for _, s, _ in parts]}, counts {shares}), "
+            f"box lines {np.bincount([box_lines(lv) for lv in levels]).tolist()}")
+        result[split] = levels
+    return result

@@ -34,10 +34,12 @@ Masking only at play time was not enough for the bigger boards; masking in train
 
 ## 4. Optional follow-ups
 
-- **AI for the designed levels (2026-11-12):** the game's medium and hard modes come from
-  `designer.py`; with `--mask` + `--avoid-repeats` the AI solves 85 / 70 / 25 % of easy / medium /
-  hard, but almost no level needing 3+ box lines. Next: `make-levels` from the designer, then train
-  with `--mask` (warm start from models_mask/s5_seed0).
+- **AI for the designed levels (2026-11-12): tried, did not work.** Stage 7 (`make-levels --stage 7`,
+  masked DQN warm-started from `models_mask/s5_seed0`, 500k steps) made the AI worse: 42.0 % vs
+  53.0 % on the s7 test with `--mask` + `--avoid-repeats`; validation fell from 15 % to 3 % during
+  training (see README). The game keeps the stage 5 model. Ideas that were not tried: reward
+  shaping (distance of the box to the target), a curriculum from 1 to 4 box lines, a lower learning
+  rate for fine-tuning, or learning from the BFS solutions (imitation first, DQN after).
 - **GPU:** PyTorch here is the CPU build; the RTX 3050 needs the CUDA build plus a
   `--device` option in `dqn.py`. Time it before relying on it.
 - **Stage 3** (7×7, 2 boxes): `make-levels --stage 3`, then train with

@@ -83,12 +83,16 @@ def pick_progression(pool: list[Level], count: int) -> list[Level]:
 
 def _training_keys(data_dir: str | Path) -> set[str]:
     """Shapes of every level the AI trains or is tested on, so game levels can avoid them."""
+    from sokoban_rl.designer import _shape_key
     from sokoban_rl.levelgen import canonical_key
 
     keys: set[str] = set()
     for path in Path(data_dir).glob("s*_*.json"):
         try:
-            keys |= {canonical_key(lv) for lv in load_levels(path)}
+            for lv in load_levels(path):
+                keys.add(canonical_key(lv))
+                if len(lv.boxes) == 1:  # the same room, box and target counts whatever the player start
+                    keys.add(_shape_key(lv))
         except (OSError, ValueError):
             continue
     return keys
