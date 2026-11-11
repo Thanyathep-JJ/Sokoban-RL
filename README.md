@@ -48,7 +48,8 @@ sokoban-rl play --split test --idx 5 --agent dqn --gif results/test5.gif
 sokoban-rl play --file my_level.txt --agent dqn        # draw your own 6x6 level
 
 # Graphical game (retro pixel-art window): level after level, score, timer, saved progress
-sokoban-rl gui                                         # continues at your first unsolved test level
+sokoban-rl gui                                         # starts in easy mode at your first unsolved level
+sokoban-rl gui --difficulty expert                     # easy | medium | hard | expert | ai_test
 sokoban-rl gui --level 150 --model models_double/s2_seed2/best.pt
 sokoban-rl gui --file my_level.txt
 
@@ -110,6 +111,10 @@ models/ results/ generated artifacts (git-ignored)
 - **Deadlocks:** the RL environment ends an episode only on a corner deadlock, and all results
   use that rule. The human games use the stronger `deadlock.py` (boxes on dead squares along a
   wall, frozen pairs and 2x2 blocks) to warn you early; a test checks it never flags a solvable state.
+- **Difficulty in `gui`** (switch with keys 1-5): easy = 6x6, 1 box, 3-4 moves; medium = 6x6, 1 box,
+  5-9; hard = 7x7, 2 boxes, 8-13; expert = 7x7, 3 boxes, 14+; ai_test = the 200 test levels.
+  Each mode is 50 generated levels (fixed seeds, cached in `data/play_*.json`). The AI was
+  trained on single-box levels, so it is expected to fail hard and expert.
 - **Scoring in `gui`:** 100 × shortest ÷ your moves per level (100 = optimal, 0 = gave up);
   stars 3 / 2 / 1 for optimal / ≤ 1.5× / solved. Best results are saved in `results/progress_*.json`.
 - **Known limits:** small maps only; the greedy DQN can get stuck repeating a move (see Results).

@@ -36,30 +36,49 @@ MONO = "Consolas"  # blocky digits for the score board
 # keys handled by the window itself (latin key, then the same key on the Thai layout)
 _EXTRA = {"n": "next", "ื": "next", "p": "prev", "ย": "prev", "v": "watch_ai", "อ": "watch_ai",
           "b": "watch_best", "ิ": "watch_best"}
+# number keys 1-5 pick a mode (top row of the Thai layout: ๅ / - ภ ถ)
+_MODE_KEYS = {"1": 0, "ๅ": 0, "2": 1, "/": 1, "3": 2, "-": 2, "4": 3, "ภ": 3, "5": 4, "ถ": 4}
+Mode = tuple[str, Callable[[], tuple[list[Level], Progress]]]  # (label, loader)
 _KEYSYMS = {"Up": "U", "Down": "D", "Left": "L", "Right": "R", "BackSpace": "undo",
             "Return": "next", "KP_Enter": "next", "Escape": "stop"}
 
 
 class App:
-    def __init__(self, root: tk.Tk, levels: list[Level], progress: Progress,
-                 agent: Callable[[Level], object | None], agent_name: str, start: int | None = None,
-                 cell: int = CELL):
+    def __init__(self, root: tk.Tk, modes: dict[str, Mode], agent: Callable[[Level], object | None],
+                 agent_name: str, mode: str | None = None, start: int | None = None, cell: int = CELL):
+        """``modes`` maps a key to (button label, loader returning the levels and their progress)."""
         self.root = root
         self.cell, self.board = cell, 7 * cell  # the largest supported level is 7 x 7
         self.tiles = {k: ImageTk.PhotoImage(v, master=root) for k, v in make_tiles(cell).items()}
-        self.levels = order_by_difficulty(levels)
-        for lv in self.levels:
-            if lv.bfs_solution is None:
-                lv.bfs_solution = solve(lv) or ""
-        self.keys = [level_key(lv, i) for i, lv in enumerate(self.levels)]
-        self.progress = progress
+        self.modes = modes
+        self._loaded: dict[str, tuple[list[Level], list[str], Progress]] = {}
         self.agent = agent
         self.agent_name = agent_name
         self.replay_job: str | None = None
         self._build()
-        first = progress.first_unsolved(self.keys) if start is None else start
-        self.load(max(0, min(first, len(self.levels) - 1)))
+        self.select_mode(mode or next(iter(modes)), start)
         self._tick()
+
+    def select_mode(self, mode: str, start: int | None = None) -> None:
+        """Switch level set (difficulty); continue at its first unsolved level."""
+        if mode not in self._loaded:
+            self.vars["msg"].set("กำลังเตรียมด่าน...")
+            self.root.configure(cursor="watch")
+            self.root.update()
+            levels, progress = self.modes[mode][1]()
+            levels = order_by_difficulty(levels)
+            for lv in levels:
+                if lv.bfs_solution is None:
+                    lv.bfs_solution = solve(lv) or ""
+            self._loaded[mode] = (levels, [level_key(lv, i) for i, lv in enumerate(levels)], progress)
+            self.root.configure(cursor="")
+        self.mode = mode
+        self.levels, self.keys, self.progress = self._loaded[mode]
+        for key, b in self.mode_buttons.items():
+            on = key == mode
+            b.configure(bg=COLORS["accent"] if on else COLORS["button"], fg=COLORS["bg"] if on else COLORS["ink"])
+        first = self.progress.first_unsolved(self.keys) if start is None else start
+        self.load(max(0, min(first, len(self.levels) - 1)))
 
     # --- layout ------------------------------------------------------------------------------
     def _build(self) -> None:
@@ -82,6 +101,16 @@ class App:
             w.pack(fill="x", pady=2)
             return w
 
+        self.mode_buttons: dict[str, tk.Button] = {}
+        if len(self.modes) > 1:
+            bar = tk.Frame(panel, bg=COLORS["panel"])
+            bar.pack(fill="x", pady=(0, 10))
+            for n, (key, (text, _)) in enumerate(self.modes.items(), start=1):
+                b = tk.Button(bar, text=f"{n} {text}", font=(FONT, 9, "bold"), takefocus=0, relief="flat", bd=0,
+                              bg=COLORS["button"], fg=COLORS["ink"], activebackground=COLORS["button_hi"],
+                              pady=4, cursor="hand2", command=lambda k=key: self.command(f"mode:{k}"))
+                b.pack(side="left", expand=True, fill="x", padx=1)
+                self.mode_buttons[key] = b
         label("title", 18, bold=True, color="accent", font=MONO)
         label("par", 10, color="muted")
         stats = tk.Frame(panel, bg=COLORS["panel"])
@@ -144,7 +173,7 @@ class App:
         self._refresh()
 
     def command(self, cmd: str) -> None:
-        if self.replay_job and cmd not in ("next", "prev", "stop", "restart"):
+        if self.replay_job and cmd not in ("next", "prev", "stop", "restart") and not cmd.startswith("mode:"):
             return  # ignore play keys while a replay is running
         if cmd in ("U", "D", "L", "R"):
             self.move(cmd)
@@ -167,6 +196,8 @@ class App:
             self.watch(self.best, "BEST")
         elif cmd == "stop":
             self._stop_replay()
+        elif cmd.startswith("mode:") and cmd[5:] != self.mode:
+            self.select_mode(cmd[5:])
         self._refresh()
 
     def on_key(self, event) -> None:
@@ -174,6 +205,8 @@ class App:
         cmd = _KEYSYMS.get(event.keysym) or _EXTRA.get(ch) or KEYS.get(ch, "")
         if cmd in ("quit", "yes", "no"):
             cmd = ""
+        if not cmd and ch in _MODE_KEYS and _MODE_KEYS[ch] < len(self.modes):
+            cmd = "mode:" + list(self.modes)[_MODE_KEYS[ch]]
         if cmd == "next" and event.keysym in ("Return", "KP_Enter") and not self.finished:
             cmd = ""  # Enter only moves on after the level is over
         if cmd:
@@ -239,6 +272,8 @@ class App:
             return f"AI ({self.agent_name}): ชนะ · {r.steps} ก้าว"
         wasted = count_wasted(self.level, actions)
         why = "ลังติดมุม" if r.deadlock else f"เดินครบ {r.steps} ก้าว ชนกำแพงเปล่า {wasted} ครั้ง"
+        if len(self.level.boxes) > 1:
+            why += " (AI ฝึกมากับลังใบเดียว)"
         return f"AI ({self.agent_name}): แพ้ · {why}"
 
     # --- replay ------------------------------------------------------------------------------
@@ -270,7 +305,8 @@ class App:
     def _refresh(self) -> None:
         n, key = len(self.levels), self.keys[self.idx]
         self.vars["title"].set(f"STAGE {self.idx + 1:03d}/{n:03d}")
-        self.vars["par"].set(f"{key} · คำตอบสั้นสุด {len(self.best)} ก้าว")
+        mode_label = self.modes[self.mode][0]
+        self.vars["par"].set(f"{mode_label} · ลัง {len(self.level.boxes)} ใบ · คำตอบสั้นสุด {len(self.best)} ก้าว")
         self.vars["moves"].set(f"{len(self.session.actions):03d}")
         self._update_time()
         rec = self.progress.best.get(key)
@@ -336,8 +372,8 @@ class App:
             self._text(self.board // 2, y, banner, 30 if big else 14, color if big else COLORS["ink"])
 
 
-def run_gui(levels: list[Level], progress: Progress, agent: Callable[[Level], object | None],
-            agent_name: str, start: int | None = None) -> None:
+def run_gui(modes: dict[str, Mode], agent: Callable[[Level], object | None], agent_name: str,
+            mode: str | None = None, start: int | None = None) -> None:
     if sys.platform == "win32":
         try:  # draw sharp on scaled displays instead of letting Windows blur the window
             import ctypes
@@ -348,5 +384,5 @@ def run_gui(levels: list[Level], progress: Progress, agent: Callable[[Level], ob
     root = tk.Tk()
     scale = max(1.0, root.winfo_fpixels("1i") / 96)  # 1.25 on a 125 % display
     cell = 16 * max(4, round(4 * scale))  # a whole number of screen pixels per art pixel
-    App(root, levels, progress, agent, agent_name, start, cell=cell)
+    App(root, modes, agent, agent_name, mode, start, cell=cell)
     root.mainloop()

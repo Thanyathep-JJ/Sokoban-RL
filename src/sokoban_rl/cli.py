@@ -249,27 +249,34 @@ def _agent_factory(args):
 
 
 def cmd_gui(args) -> None:
-    from sokoban_rl.campaign import Progress
+    from sokoban_rl.campaign import DIFFICULTIES, Progress, difficulty_levels
 
     try:
         from sokoban_rl.gui import run_gui
     except ImportError as e:  # some Linux Pythons ship without tkinter
         sys.exit(f"เปิดหน้าต่างไม่ได้ ต้องมี tkinter: {e}")
+    results = Path(args.progress_dir)
+
+    def progress(name: str) -> Progress:
+        path = results / f"progress_{name}.json"
+        if args.reset and path.exists():
+            path.unlink()
+        return Progress(path)
+
     if args.file:
         level = _load_level(args)
         _solve_or_exit(level)
-        levels, progress = [level], Progress(None)
+        modes = {"file": (level.name or "ด่านของคุณ", lambda: ([level], Progress(None)))}
+        first = "file"
     else:
-        try:
-            levels = load_levels(Path(args.data_dir) / f"s{args.stage}_{args.split}.json")
-        except (ValueError, OSError) as e:
-            sys.exit(f"อ่านด่านไม่ได้: {e} (สร้างด่านก่อนด้วย: sokoban-rl make-levels --stage {args.stage})")
-        path = Path(args.progress_dir) / f"progress_s{args.stage}_{args.split}.json"
-        if args.reset and path.exists():
-            path.unlink()
-        progress = Progress(path)
+        modes = {name: (spec["label"], lambda n=name: (difficulty_levels(n, args.data_dir), progress(n)))
+                 for name, spec in DIFFICULTIES.items()}
+        test = Path(args.data_dir) / f"s{args.stage}_test.json"
+        if test.exists():  # the 200 exam levels the AI never trained on
+            modes["ai_test"] = ("ชุดสอบ AI", lambda: (load_levels(test), progress(f"s{args.stage}_test")))
+        first = args.difficulty
     start = args.level - 1 if args.level else None
-    run_gui(levels, progress, _agent_factory(args), args.agent, start)
+    run_gui(modes, _agent_factory(args), args.agent, first, start)
 
 
 def cmd_challenge(args) -> None:
@@ -371,10 +378,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--once", action="store_true", help="print the status once and exit")
     s.set_defaults(func=cmd_watch)
 
-    s = sub.add_parser("gui", help="graphical game: level after level with score, timer and saved progress")
-    src = s.add_mutually_exclusive_group()
-    src.add_argument("--file", help="play one level drawn in a text file")
-    src.add_argument("--split", choices=("train", "val", "test"), default="test")
+    s = sub.add_parser("gui", help="graphical game: difficulty modes, score, timer and saved progress")
+    s.add_argument("--difficulty", choices=("easy", "medium", "hard", "expert", "ai_test"), default="easy",
+                   help="mode to start in (switch any time in the window with keys 1-5)")
+    s.add_argument("--file", help="play one level drawn in a text file")
     s.add_argument("--stage", type=int, choices=(2, 3), default=2)
     s.add_argument("--level", type=int, help="start at this level number (1 = easiest); default: first unsolved")
     s.add_argument("--agent", choices=("dqn", "qtable", "none"), default="dqn")
@@ -382,8 +389,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--model")
     s.add_argument("--models-dir", default="models")
     s.add_argument("--progress-dir", default="results", help="where your scores are saved")
-    s.add_argument("--reset", action="store_true", help="forget saved scores for this split")
-    s.set_defaults(func=cmd_gui, idx=None)
+    s.add_argument("--reset", action="store_true", help="forget all saved scores")
+    s.set_defaults(func=cmd_gui, idx=None, split="test")
 
     s = sub.add_parser("challenge", help="play a level yourself, then compare with the AI and BFS")
     src = s.add_mutually_exclusive_group()

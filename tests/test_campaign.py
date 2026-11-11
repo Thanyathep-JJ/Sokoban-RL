@@ -3,7 +3,9 @@ import os
 import pytest
 
 from sokoban_rl.campaign import (
+    DIFFICULTIES,
     Progress,
+    difficulty_levels,
     fmt_clock,
     level_key,
     order_by_difficulty,
@@ -75,7 +77,9 @@ def test_gui_win_records_score(tmp_path, example_level):
     root.withdraw()
     try:
         progress = Progress(tmp_path / "p.json")
-        app = App(root, [example_level], progress, agent=lambda lv: None, agent_name="none")
+        other = parse_level(["######", "#@$ .#", "######"], name="other")
+        modes = {"a": ("A", lambda: ([example_level], progress)), "b": ("B", lambda: ([other], Progress(None)))}
+        app = App(root, modes, agent=lambda lv: None, agent_name="none")
         for a in "URD":
             app.command(a)
         assert app.finished == "won"
@@ -87,5 +91,24 @@ def test_gui_win_records_score(tmp_path, example_level):
         assert app.session.actions == "DR" and not app.finished
         app.command("watch_best")  # ignored until the level is over
         assert app.replay_job is None
+        app.command("mode:b")  # switch difficulty
+        assert app.level.name == "other" and app.session.actions == ""
+        app.command("R")
+        app.command("R")
+        assert app.finished == "won"
+        app.command("mode:a")
+        assert app.level.name == "example" and progress.best["example"]["score"] == 100
     finally:
         root.destroy()
+
+
+@pytest.mark.parametrize("name", list(DIFFICULTIES))
+def test_difficulty_sets_match_their_spec(tmp_path, name):
+    spec = DIFFICULTIES[name]
+    levels = difficulty_levels(name, tmp_path, count=5)
+    assert len(levels) == 5 and (tmp_path / f"play_{name}.json").exists()
+    for lv in levels:
+        assert len(lv.boxes) == spec["boxes"] and lv.width == spec["size"]
+        assert spec["min_len"] <= len(lv.bfs_solution) <= spec["max_len"]
+    again = difficulty_levels(name, tmp_path, count=5)  # read back from the cache
+    assert [lv.bfs_solution for lv in again] == [lv.bfs_solution for lv in levels]

@@ -11,7 +11,37 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from sokoban_rl.game import Level
+from sokoban_rl.game import Level, load_levels, save_levels
+
+# Difficulty modes for human play. Each is a fixed, reproducible set of generated levels.
+# Single-box levels rarely need more than 8-9 moves, so the harder modes add boxes.
+DIFFICULTIES = {
+    "easy": {"label": "ง่าย", "size": 6, "boxes": 1, "min_len": 3, "max_len": 4, "seed": 7001},
+    "medium": {"label": "ปานกลาง", "size": 6, "boxes": 1, "min_len": 5, "max_len": 9, "seed": 7002},
+    "hard": {"label": "ยาก", "size": 7, "boxes": 2, "min_len": 8, "max_len": 13, "seed": 7003},
+    "expert": {"label": "ยากมาก", "size": 7, "boxes": 3, "min_len": 14, "max_len": 40, "seed": 7004},
+}
+LEVELS_PER_DIFFICULTY = 50
+
+
+def difficulty_levels(name: str, data_dir: str | Path = "data", count: int = LEVELS_PER_DIFFICULTY) -> list[Level]:
+    """The level set of one difficulty. Generated once (a few seconds), then read from a cache file."""
+    spec = DIFFICULTIES[name]
+    path = Path(data_dir) / f"play_{name}.json"
+    if path.exists():
+        try:
+            levels = load_levels(path)
+            if len(levels) >= count:
+                return levels[:count]
+        except (OSError, ValueError):
+            pass  # damaged cache: build it again
+    from sokoban_rl.levelgen import generate_split
+
+    levels, _ = generate_split(count, spec["seed"], size=spec["size"], n_boxes=spec["boxes"],
+                               min_len=spec["min_len"], max_len=spec["max_len"], prefix=name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    save_levels(levels, path)
+    return levels
 
 
 def score_for(moves: int, best: int) -> int:
