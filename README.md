@@ -112,11 +112,30 @@ models/ results/ generated artifacts (git-ignored)
   use that rule. The human games use the stronger `deadlock.py` (boxes on dead squares along a
   wall, frozen pairs and 2x2 blocks) to warn you early; a test checks it never flags a solvable state.
 - **Difficulty in `gui`** (keys 1-3): three modes of 20 stages, one box, one floor size each:
-  easy = 3x3 floor (5x5 board with walls), medium = 4x4 (6x6), hard = 5x5 (7x7). Within a mode
-  the shortest solution grows stage by stage (ties: more pushes = harder). Stages are picked
-  from a large generated pool and none is shaped like a level the AI trains or is tested on.
-  Sets are cached in `data/play_*.json`. Modes with 2 and 3 boxes exist but are hidden for now
-  (`--difficulty two_boxes` / `expert`).
+  easy = 3x3 floor (5x5 board with walls), medium = 4x4 (6x6), hard = 5x5 (7x7).
+  A bigger board alone did not make levels harder (the old hard set needed at most 10 moves and
+  had ~1 inner wall), and simply adding random walls makes levels *easier* (they cut the room up).
+  So medium and hard are built by `designer.py`, following Taylor & Parberry (2011): the room is
+  made from wall pieces (short walls and corners) for hard, the start is the state that needs the
+  most pushes (found by pulling the box away from the target), and a level is kept only if the box
+  has to change direction several times (**box lines**) with no straight push longer than 3.
+  Inside a mode stages are ordered by box lines, then by shortest solution, since length alone
+  predicts human difficulty poorly (Jarušek & Pelánek 2010).
+
+  | Mode | Shortest solution | Box lines | Inner walls (avg) | AI solves |
+  |---|---|---|---|---|
+  | easy (random walk, as before) | 3-8 moves | 1-2 | 1.6 | 85 % |
+  | medium (designed) | 5-10 moves | 2-3 | 2.0 | 70 % |
+  | hard (designed, wall pieces) | 7-15 moves | 2-4 | 2.9 | 25 % |
+
+  Hard stages 1-8 need 2 box lines, 9-20 need 3-4. The limits were tuned so the AI (with the
+  play-time rules below) still solves some stages: it gets about half of hard 1-8 and almost none
+  of 9-20, where you have to plan. A first, harder version (hard 12-25 moves, 3-5 box lines)
+  left the AI at 0 %. "AI solves" uses `--mask` and `--avoid-repeats`; without them it is
+  70 / 45 / 0 %. None of the game
+  levels is shaped like a level the AI trains or is tested on. Sets are cached in
+  `data/play_*.json`; old saved scores are kept apart by the tag in the level names. Modes with
+  2 and 3 boxes exist but are hidden for now (`--difficulty two_boxes` / `expert`).
 - **Stage 5 (mixed board sizes):** one box on 5x5, 6x6 and 7x7 boards (10 % / 45 % / 45 % of each
   split, because the 3x3 floor has only ~180 distinct levels). Trained without `--mask` (300k steps
   from the seed 2 Double DQN model) it reached only 47.5 % test and was worse than stage 2 on small
@@ -133,8 +152,8 @@ models/ results/ generated artifacts (git-ignored)
   The gain is on the 5x5 floor; on 3x3 and 4x4 it is about the same as stage 2. So `gui` plays
   1-box levels on a 5x5 floor (the hard mode) with the stage 5 model (`--big-model`, default
   `models_mask/s5_seed0/best.pt`, only while masking is on) and everything else with the stage 2
-  model. On the game's own 20 stages per mode (shapes the AI never saw) the success is easy 70 %,
-  medium 50 %, hard 5 % -> 40 % with the stage 5 model. With 20 levels per row this is noisy.
+  model. On the earlier game sets (random-walk levels, before the designed medium and hard modes)
+  the success was easy 70 %, medium 50 %, hard 5 % -> 40 % with the stage 5 model (20 levels each, noisy).
   The checkpoint was picked on the validation split (82 %); the test split was used only once, after.
   A follow-up stage 6 run (7x7 board only, warm-started from the unmasked stage 5,
   300k steps, no masking) failed: validation peaked at 24 % after 50k steps, then fell to 7-9 % while the training
@@ -207,6 +226,21 @@ still the plain greedy result. `play`, `challenge` and `evaluate` take `--mask`;
 uses it by default (`--no-mask` turns it off). `train --mask` also removes such moves from
 exploration and from the Q target (max over real moves only); the stage 5 result above shows
 that this fixes the bigger boards, where masking only at play time was not enough.
+
+**Post-hoc: not walking back to a position already seen.** With wasted moves gone, the remaining
+loop is a back-and-forth between two squares (e.g. `LRLRLR...` next to the box). `--avoid-repeats`
+remembers the positions of the current game and prefers moves that lead somewhere new (any valid
+move if none does). This is a small play-time search rule, not something the network learned, so
+it is reported separately:
+
+| Test split, `--mask` + `--avoid-repeats` | Validation | Test |
+|---|---|---|
+| Stage 2, seeds 0, 1, 2 (original runs) | 96.7 ± 0.5 % | 96.3 ± 0.9 % |
+| Stage 5, trained with `--mask` | | 97.0 % |
+
+Found on the game's levels, after the earlier results; the test splits were then evaluated once.
+`play`, `challenge` and `evaluate` take `--avoid-repeats`; `gui` uses it by default
+(`--allow-repeats` turns it off).
 
 | Optimal win (test #12, 6 steps) | Win with detour (test #14, 11 vs 7) | Loss: stuck on a wall (test #11) |
 |---|---|---|

@@ -23,11 +23,18 @@ DIFFICULTIES = {
     "easy": {"label": "ง่าย", "seed": 7201, "tag": "v3", "parts": [
         {"size": 5, "boxes": 1, "min_len": 3, "max_len": 9, "count": 20, "pool": 30},
     ]},
-    "medium": {"label": "ปานกลาง", "seed": 7202, "tag": "v3", "parts": [
-        {"size": 6, "boxes": 1, "min_len": 3, "max_len": 12, "count": 20, "pool": 400},
+    # medium and hard are "designed" (see designer.py): the start is far from solved and the box has
+    # to change direction several times (box lines); hard also builds its room from wall pieces.
+    "medium": {"label": "ปานกลาง", "seed": 7402, "tag": "v5", "parts": [
+        {"size": 6, "boxes": 1, "min_len": 5, "max_len": 10, "count": 20, "pool": 200,
+         "design": {"walls": ("random", 1, 3), "far": 0.5, "min_lines": 2, "max_lines": 3}},
     ]},
-    "hard": {"label": "ยาก", "seed": 7203, "tag": "v3", "parts": [
-        {"size": 7, "boxes": 1, "min_len": 4, "max_len": 12, "count": 20, "pool": 800},
+    # hard: room from wall pieces; stages 1-8 need 2 box lines, 9-20 need 3-4
+    "hard": {"label": "ยาก", "seed": 7403, "tag": "v8", "parts": [
+        {"size": 7, "boxes": 1, "min_len": 7, "max_len": 11, "count": 8, "pool": 200,
+         "design": {"walls": ("pieces", 1, 2), "far": 0.5, "min_lines": 2, "max_lines": 2}},
+        {"size": 7, "boxes": 1, "min_len": 10, "max_len": 16, "count": 12, "pool": 200,
+         "design": {"walls": ("pieces", 1, 3), "far": 0.6, "min_lines": 3, "max_lines": 4}},
     ]},
     # kept for later, hidden from the window: more boxes (open with --difficulty two_boxes / expert)
     "two_boxes": {"label": "ยาก 2 ลัง", "seed": 7003, "hidden": True, "parts": [
@@ -52,9 +59,13 @@ def pushes(level: Level) -> int:
     return n
 
 
-def difficulty_score(level: Level) -> tuple[int, int, int, int]:
-    """Harder = more boxes, then a bigger board, then a longer shortest solution, then more pushes."""
-    return len(level.boxes), level.width * level.height, level.bfs_len or 0, pushes(level)
+def difficulty_score(level: Level) -> tuple[int, int, int, int, int]:
+    """Harder = more boxes, a bigger board, more box lines (direction changes of the box), then a
+    longer shortest solution, then more pushes. Box lines come before length because length alone
+    predicts how hard people find a level poorly (Jarušek & Pelánek 2010)."""
+    from sokoban_rl.designer import box_lines
+
+    return len(level.boxes), level.width * level.height, box_lines(level), level.bfs_len or 0, pushes(level)
 
 
 def pick_progression(pool: list[Level], count: int) -> list[Level]:
@@ -103,9 +114,15 @@ def difficulty_levels(name: str, data_dir: str | Path = "data") -> list[Level]:
     exclude = _training_keys(data_dir)
     levels: list[Level] = []
     for i, part in enumerate(spec["parts"]):
-        pool, _ = generate_split(part["pool"], spec["seed"] + 100 * i, size=part["size"],
-                                 n_boxes=part["boxes"], min_len=part["min_len"],
-                                 max_len=part["max_len"], exclude=exclude, prefix=name)
+        if "design" in part:
+            from sokoban_rl.designer import generate_designed
+
+            pool = generate_designed(part["pool"], spec["seed"] + 100 * i, part["size"], min_len=part["min_len"],
+                                     max_len=part["max_len"], exclude=exclude, prefix=name, **part["design"])
+        else:
+            pool, _ = generate_split(part["pool"], spec["seed"] + 100 * i, size=part["size"],
+                                     n_boxes=part["boxes"], min_len=part["min_len"],
+                                     max_len=part["max_len"], exclude=exclude, prefix=name)
         levels += pick_progression(pool, part["count"])
     levels.sort(key=difficulty_score)
     for i, lv in enumerate(levels, start=1):

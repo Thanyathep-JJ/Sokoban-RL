@@ -118,7 +118,8 @@ def cmd_evaluate(args) -> None:
                 missing = [str(p) for p in paths if not p.exists()]
                 if missing:
                     sys.exit(f"ไม่พบโมเดล: {', '.join(missing)} (เทรนก่อนด้วย: sokoban-rl train)")
-                policies = [DQNPolicy(load_model(p), mask=args.mask) for p in paths]
+                policies = [DQNPolicy(load_model(p), mask=args.mask, avoid_repeats=args.avoid_repeats)
+                            for p in paths]
             res = [evaluate(levels, p) for p in policies]
             rows.append((agent, split, len(levels), len(res),
                          _fmt([r["success_pct"] for r in res]),
@@ -175,7 +176,7 @@ def _make_policy(args, level):
         model = args.model or f"{args.models_dir}/s{args.stage}_seed{args.seed}/best.pt"
         if not Path(model).exists():
             sys.exit(f"ไม่พบโมเดล {model} (เทรนก่อนด้วย: sokoban-rl train --stage {args.stage})")
-        return DQNPolicy(load_model(model), mask=args.mask)
+        return DQNPolicy(load_model(model), mask=args.mask, avoid_repeats=args.avoid_repeats)
     if args.agent == "qtable":
         from sokoban_rl.policies import QTablePolicy
         from sokoban_rl.qlearning import train_q
@@ -279,7 +280,7 @@ def _agent_factory(args):
             else:
                 from sokoban_rl.dqn import DQNPolicy, load_model
 
-                cache[n, big] = DQNPolicy(load_model(path), mask=args.mask)
+                cache[n, big] = DQNPolicy(load_model(path), mask=args.mask, avoid_repeats=args.avoid_repeats)
         return cache[n, big]
 
     return dqn
@@ -390,6 +391,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--models-dir", default="models")
     s.add_argument("--out-dir", default="results")
     s.add_argument("--mask", action="store_true", help="the AI never picks a move that changes nothing")
+    s.add_argument("--avoid-repeats", action="store_true",
+                   help="the AI prefers moves that lead to a position not seen yet in this game")
     s.set_defaults(func=cmd_evaluate)
 
     s = sub.add_parser("plot", help="plot training curves from log.csv files")
@@ -411,6 +414,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--no-anim", action="store_true")
     s.add_argument("--gif")
     s.add_argument("--mask", action="store_true", help="the AI never picks a move that changes nothing")
+    s.add_argument("--avoid-repeats", action="store_true",
+                   help="the AI prefers moves that lead to a position not seen yet in this game")
     s.set_defaults(func=cmd_play)
 
     s = sub.add_parser("watch", help="live progress bar for a running training (reads its log)")
@@ -434,6 +439,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--reset", action="store_true", help="forget all saved scores")
     s.add_argument("--big-model", default="models_mask/s5_seed0/best.pt",
                    help="model for one box on a 5x5 floor (trained with --mask, so used only with masking)")
+    s.add_argument("--allow-repeats", dest="avoid_repeats", action="store_false",
+                   help="let the AI walk back to positions it has already been in (it loops more)")
     s.add_argument("--no-mask", dest="mask", action="store_false",
                    help="let the AI waste moves on walls (it is stronger without them)")
     s.set_defaults(func=cmd_gui, idx=None, split="test")
@@ -451,6 +458,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--delay", type=float, default=0.3)
     s.add_argument("--no-anim", action="store_true")
     s.add_argument("--mask", action="store_true", help="the AI never picks a move that changes nothing")
+    s.add_argument("--avoid-repeats", action="store_true",
+                   help="the AI prefers moves that lead to a position not seen yet in this game")
     s.set_defaults(func=cmd_challenge)
     return p
 

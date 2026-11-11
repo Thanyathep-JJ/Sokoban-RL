@@ -87,7 +87,7 @@ def test_gui_win_records_score(tmp_path, example_level):
             app.command(a)
         assert app.finished == "won"
         assert progress.best["example"]["score"] == 100
-        assert "ชนะ" in app.vars["msg"].get() and "ไม่มีโมเดล" in app.vars["msg"].get()
+        assert "ชนะ" in app.vars["msg"].get() and "ไม่มีโมเดล" in app.vars["ai"].get()
         app.command("restart")
         app.command("D")  # (2,2) -> (3,2)
         app.command("R")  # push nothing: (3,3) is free
@@ -150,7 +150,7 @@ def test_totals_ignore_levels_from_other_sets(tmp_path):
 def test_one_floor_size_per_mode():
     from sokoban_rl.campaign import DIFFICULTIES as D
 
-    assert [[p["size"] for p in D[n]["parts"]] for n in ("easy", "medium", "hard")] == [[5], [6], [7]]
+    assert [{p["size"] for p in D[n]["parts"]} for n in ("easy", "medium", "hard")] == [{5}, {6}, {7}]
     assert all(p["boxes"] == 1 for n in ("easy", "medium", "hard") for p in D[n]["parts"])
 
 

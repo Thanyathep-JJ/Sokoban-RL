@@ -104,20 +104,30 @@ class DQNPolicy:
 
     name = "dqn"
 
-    def __init__(self, net: QNet, mask: bool = False):
+    def __init__(self, net: QNet, mask: bool = False, avoid_repeats: bool = False):
         self.net = net.eval()
         self.mask = mask  # skip moves that would change nothing
+        # remember the positions of this game and prefer moves that lead somewhere new, which breaks
+        # back-and-forth loops (a play-time rule, not something the network learned)
+        self.avoid_repeats = avoid_repeats
+        self.seen: set = set()
 
     def reset(self, level: Level) -> None:
-        pass
+        self.seen = set()
 
     @torch.no_grad()
     def act(self, env: SokobanEnv) -> int:
         obs = torch.from_numpy(env.observation()).unsqueeze(0)
         q = self.net(obs)
-        if self.mask:
-            valid = torch.from_numpy(valid_moves(env.level, env.player, env.boxes)).unsqueeze(0)
-            q = q.masked_fill(~valid, float("-inf"))
+        if self.mask or self.avoid_repeats:
+            valid = valid_moves(env.level, env.player, env.boxes)
+            if self.avoid_repeats:
+                self.seen.add((env.player, env.boxes))
+                fresh = valid & np.array([move(env.level, env.player, env.boxes, a)[:2] not in self.seen
+                                          for a in range(4)])
+                if fresh.any():
+                    valid = fresh
+            q = q.masked_fill(~torch.from_numpy(valid).unsqueeze(0), float("-inf"))
         return int(q.argmax(1).item())
 
 

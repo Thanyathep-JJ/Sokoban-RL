@@ -72,7 +72,7 @@ def test_agent_factory_uses_the_big_model_only_on_5x5_floors(tmp_path):
 
     def args(**kw):
         base = dict(agent="dqn", model=None, models_dir=str(tmp_path / "small"), seed=0,
-                    big_model=str(big / "best.pt"), mask=True)
+                    big_model=str(big / "best.pt"), mask=True, avoid_repeats=True)
         return SimpleNamespace(**{**base, **kw})
 
     lv5 = generate_split(1, 1, size=5, n_boxes=1, min_len=3, max_len=9)[0][0]
@@ -86,3 +86,17 @@ def test_agent_factory_uses_the_big_model_only_on_5x5_floors(tmp_path):
     assert named(lv7) is named(lv5)  # an explicit --model wins
     gone = _agent_factory(args(big_model=str(tmp_path / "missing.pt")))
     assert gone(lv7) is gone(lv5)  # no big model on disk: fall back to stage 2
+
+
+def test_avoid_repeats_breaks_a_back_and_forth_loop(example_level):
+    class Swing(QNet):
+        """Always rates left best, right second: a plain greedy player swings left-right forever."""
+
+        def forward(self, x):
+            return torch.tensor([[0.0, 0.0, 2.0, 1.0]]).repeat(x.shape[0], 1)
+
+    plain = run_episode(example_level, DQNPolicy(Swing(), mask=True))
+    guarded = run_episode(example_level, DQNPolicy(Swing(), mask=True, avoid_repeats=True))
+    positions = len(set(guarded.actions))
+    assert not plain.solved
+    assert positions >= 2 and guarded.actions != plain.actions  # it leaves the loop and explores
