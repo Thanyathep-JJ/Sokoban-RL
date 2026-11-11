@@ -48,8 +48,8 @@ sokoban-rl play --split test --idx 5 --agent dqn --gif results/test5.gif
 sokoban-rl play --file my_level.txt --agent dqn        # draw your own 6x6 level
 
 # Graphical game (retro pixel-art window): level after level, score, timer, saved progress
-sokoban-rl gui                                         # starts in easy mode at your first unsolved level
-sokoban-rl gui --difficulty expert                     # easy | medium | hard | expert | ai_test
+sokoban-rl gui                                         # starts in easy mode at your first unsolved stage
+sokoban-rl gui --difficulty medium                     # easy | medium
 sokoban-rl gui --level 150 --model models_double/s2_seed2/best.pt
 sokoban-rl gui --file my_level.txt
 
@@ -111,10 +111,14 @@ models/ results/ generated artifacts (git-ignored)
 - **Deadlocks:** the RL environment ends an episode only on a corner deadlock, and all results
   use that rule. The human games use the stronger `deadlock.py` (boxes on dead squares along a
   wall, frozen pairs and 2x2 blocks) to warn you early; a test checks it never flags a solvable state.
-- **Difficulty in `gui`** (switch with keys 1-5): easy = 6x6, 1 box, 3-4 moves; medium = 6x6, 1 box,
-  5-9; hard = 7x7, 2 boxes, 8-13; expert = 7x7, 3 boxes, 14+; ai_test = the 200 test levels.
-  Each mode is 50 generated levels (fixed seeds, cached in `data/play_*.json`). The AI was
-  trained on single-box levels, so it is expected to fail hard and expert.
+- **Difficulty in `gui`** (keys 1-2): two modes of 20 stages each that get harder stage by stage.
+  Easy: 6x6, 1 box, shortest solution 3 -> 9 moves. Medium: 7x7, stages 1-6 with 1 box (7 -> 12
+  moves), then stages 7-20 with 2 boxes (9 -> 16 moves). Each part is picked from a large
+  generated pool so solution lengths climb evenly (ties: more pushes = harder), and no stage is
+  shaped like any level the AI trains or is tested on. Sets are cached in `data/play_*.json`.
+  Hard (2 boxes) and expert (3 boxes) modes exist but are hidden for now (`--difficulty hard`).
+  The window compares you with the AI model for the level's box count: stage 2 (1 box) or
+  stage 3 (2 boxes).
 - **Scoring in `gui`:** 100 × shortest ÷ your moves per level (100 = optimal, 0 = gave up);
   stars 3 / 2 / 1 for optimal / ≤ 1.5× / solved. Best results are saved in `results/progress_*.json`.
 - **Known limits:** small maps only; the greedy DQN can get stuck repeating a move (see Results).

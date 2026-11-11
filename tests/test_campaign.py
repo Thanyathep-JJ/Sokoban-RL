@@ -6,11 +6,14 @@ from sokoban_rl.campaign import (
     DIFFICULTIES,
     Progress,
     difficulty_levels,
+    difficulty_score,
     fmt_clock,
     level_key,
     order_by_difficulty,
+    pick_progression,
     score_for,
     stars_for,
+    visible_difficulties,
 )
 from sokoban_rl.game import parse_level
 from sokoban_rl.human import KEYS
@@ -102,13 +105,42 @@ def test_gui_win_records_score(tmp_path, example_level):
         root.destroy()
 
 
-@pytest.mark.parametrize("name", list(DIFFICULTIES))
-def test_difficulty_sets_match_their_spec(tmp_path, name):
-    spec = DIFFICULTIES[name]
-    levels = difficulty_levels(name, tmp_path, count=5)
-    assert len(levels) == 5 and (tmp_path / f"play_{name}.json").exists()
-    for lv in levels:
-        assert len(lv.boxes) == spec["boxes"] and lv.width == spec["size"]
-        assert spec["min_len"] <= len(lv.bfs_solution) <= spec["max_len"]
-    again = difficulty_levels(name, tmp_path, count=5)  # read back from the cache
+def test_difficulty_set_climbs_through_its_parts(tmp_path, monkeypatch):
+    spec = {"label": "t", "seed": 5, "parts": [
+        {"size": 6, "boxes": 1, "min_len": 3, "max_len": 6, "count": 4, "pool": 40},
+        {"size": 7, "boxes": 2, "min_len": 5, "max_len": 9, "count": 4, "pool": 40},
+    ]}
+    monkeypatch.setitem(DIFFICULTIES, "test_mode", spec)
+    levels = difficulty_levels("test_mode", tmp_path)
+    assert len(levels) == 8 and (tmp_path / "play_test_mode.json").exists()
+    assert [len(lv.boxes) for lv in levels] == [1] * 4 + [2] * 4  # the box is added half way
+    scores = [difficulty_score(lv) for lv in levels]
+    assert scores == sorted(scores)  # never easier than the stage before
+    assert levels[0].name == "test_mode_01" and levels[-1].name == "test_mode_08"
+    again = difficulty_levels("test_mode", tmp_path)  # read back from the cache
     assert [lv.bfs_solution for lv in again] == [lv.bfs_solution for lv in levels]
+
+
+def test_only_easy_and_medium_are_shown():
+    assert visible_difficulties() == ["easy", "medium"]
+    assert {"hard", "expert"} <= set(DIFFICULTIES)  # kept for later
+    assert all(sum(p["count"] for p in DIFFICULTIES[n]["parts"]) == 20 for n in DIFFICULTIES)
+
+
+def test_pick_progression_spreads_over_the_whole_range():
+    def corridor(n):  # only the solution length matters to pick_progression
+        lv = parse_level(["######", "#@$ .#", "######"])
+        lv.bfs_solution = "R" * n
+        return lv
+
+    pool = [corridor(n) for n in [3] * 30 + [4, 5]] + [corridor(n) for n in range(6, 11)]
+    lens = [lv.bfs_len for lv in pick_progression(pool, 4)]
+    assert lens == sorted(lens) and lens[0] == 3 and lens[-1] == 10
+    assert lens.count(3) == 1  # not crowded at the easy end where most levels are
+
+
+def test_totals_ignore_levels_from_other_sets(tmp_path):
+    p = Progress(tmp_path / "p.json")
+    p.record("hard_0012", 9, 5.0, 9)  # a result from an older level set
+    p.record("hard_01", 10, 5.0, 8)
+    assert p.totals(["hard_01", "hard_02"]) == (80, 2, 1)

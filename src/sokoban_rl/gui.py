@@ -313,8 +313,8 @@ class App:
         self.vars["record"].set(
             f"สถิติดีสุด: {'★' * rec['stars']} {rec['moves']} ก้าว · {fmt_clock(rec['seconds'])}"
             if rec else "ยังไม่เคยผ่านด่านนี้")
-        solved = sum(k in self.progress.best for k in self.keys)
-        self.vars["total"].set(f"SCORE {self.progress.total_score:,}  ★{self.progress.total_stars}"
+        score, stars, solved = self.progress.totals(self.keys)
+        self.vars["total"].set(f"SCORE {score:,}  ★{stars}"
                                f"  ผ่าน {solved}/{n}")
         done = self.finished is not None
         for cmd in ("watch_ai", "watch_best"):

@@ -107,13 +107,13 @@ def generate_split(
 
 
 def build_stage(out_dir, size: int, n_boxes: int, stage: int, min_len: int = 3,
-                max_len: int = 15, log=print) -> dict[str, list[Level]]:
+                max_len: int = 15, log=print, exclude: set[str] | None = None) -> dict[str, list[Level]]:
     """Generate train/val/test for one stage and write ``s{stage}_{split}.json``."""
     from pathlib import Path
 
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    used: set[str] = set()
+    used: set[str] = set(exclude or ())  # e.g. the game levels, so the AI never trains on them
     result = {}
     for split, (seed, count) in SPLITS.items():
         levels, stats = generate_split(count, seed + stage, size, n_boxes, min_len, max_len,

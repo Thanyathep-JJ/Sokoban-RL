@@ -20,7 +20,9 @@ from sokoban_rl.game import (
     load_levels,
 )
 
-STAGE_DEFAULTS = {2: {"size": 6, "boxes": 1}, 3: {"size": 7, "boxes": 2}}
+# stage 2: 6x6, 1 box; stage 3: 7x7, 2 boxes (game mode "hard"); stage 4: 7x7, 3 boxes ("expert")
+STAGE_DEFAULTS = {2: {"size": 6, "boxes": 1, "max_len": 15}, 3: {"size": 7, "boxes": 2, "max_len": 15},
+                  4: {"size": 7, "boxes": 3, "max_len": 25}}
 
 
 # --- helpers ---------------------------------------------------------------------------------
@@ -42,9 +44,18 @@ def cmd_make_levels(args) -> None:
     from sokoban_rl.levelgen import build_stage
 
     d = STAGE_DEFAULTS[args.stage]
+    size, boxes = args.size or d["size"], args.boxes or d["boxes"]
+    exclude = None
+    if args.stage >= 3:  # keep the game's own levels out of the AI's training data
+        from sokoban_rl.campaign import DIFFICULTIES, difficulty_levels
+        from sokoban_rl.levelgen import canonical_key
+
+        exclude = {canonical_key(lv) for name, spec in DIFFICULTIES.items()
+                   if any((pt["size"], pt["boxes"]) == (size, boxes) for pt in spec["parts"])
+                   for lv in difficulty_levels(name, args.data_dir)}
     t = time.time()
-    build_stage(args.data_dir, args.size or d["size"], args.boxes or d["boxes"], args.stage,
-                args.min_len, args.max_len)
+    build_stage(args.data_dir, size, boxes, args.stage, args.min_len, args.max_len or d["max_len"],
+                exclude=exclude)
     print(f"เสร็จใน {time.time() - t:.1f} วินาที → {args.data_dir}/s{args.stage}_*.json")
 
 
@@ -232,24 +243,37 @@ def _agent_factory(args):
         from sokoban_rl.qlearning import train_q
 
         return lambda level: QTablePolicy(train_q(level, seed=args.seed))
-    model = Path(args.model or f"{args.models_dir}/s{args.stage}_seed{args.seed}/best.pt")
-    if not model.exists():
-        print(f"ไม่พบโมเดล {model} จะเทียบกับ BFS อย่างเดียว")
-        return lambda level: None
-    cache = {}
+    # one model per box count: 1 box -> stage 2, 2 boxes -> stage 3, 3 boxes -> stage 4
+    stage_for_boxes = {1: 2, 2: 3, 3: 4}
+    cache: dict[int, object] = {}
+    warned: set[Path] = set()
+
+    def model_path(n_boxes: int) -> Path | None:
+        if n_boxes == 1 and args.model:
+            return Path(args.model)
+        stage = stage_for_boxes.get(n_boxes)
+        return Path(f"{args.models_dir}/s{stage}_seed{args.seed}/best.pt") if stage else None
 
     def dqn(level):
-        if "p" not in cache:
-            from sokoban_rl.dqn import DQNPolicy, load_model
+        n = len(level.boxes)
+        if n not in cache:
+            path = model_path(n)
+            if path is None or not path.exists():
+                if path and path not in warned:
+                    warned.add(path)
+                    print(f"ไม่พบโมเดล {path} ด่านที่มีลัง {n} ใบจะเทียบกับ BFS อย่างเดียว")
+                cache[n] = None
+            else:
+                from sokoban_rl.dqn import DQNPolicy, load_model
 
-            cache["p"] = DQNPolicy(load_model(model))
-        return cache["p"]
+                cache[n] = DQNPolicy(load_model(path))
+        return cache[n]
 
     return dqn
 
 
 def cmd_gui(args) -> None:
-    from sokoban_rl.campaign import DIFFICULTIES, Progress, difficulty_levels
+    from sokoban_rl.campaign import DIFFICULTIES, Progress, difficulty_levels, visible_difficulties
 
     try:
         from sokoban_rl.gui import run_gui
@@ -269,11 +293,11 @@ def cmd_gui(args) -> None:
         modes = {"file": (level.name or "ด่านของคุณ", lambda: ([level], Progress(None)))}
         first = "file"
     else:
-        modes = {name: (spec["label"], lambda n=name: (difficulty_levels(n, args.data_dir), progress(n)))
-                 for name, spec in DIFFICULTIES.items()}
-        test = Path(args.data_dir) / f"s{args.stage}_test.json"
-        if test.exists():  # the 200 exam levels the AI never trained on
-            modes["ai_test"] = ("ชุดสอบ AI", lambda: (load_levels(test), progress(f"s{args.stage}_test")))
+        shown = visible_difficulties()
+        if args.difficulty not in shown:  # a hidden mode was asked for by name
+            shown.append(args.difficulty)
+        modes = {name: (DIFFICULTIES[name]["label"],
+                        lambda n=name: (difficulty_levels(n, args.data_dir), progress(n))) for name in shown}
         first = args.difficulty
     start = args.level - 1 if args.level else None
     run_gui(modes, _agent_factory(args), args.agent, first, start)
@@ -314,11 +338,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("make-levels", help="generate train/val/test levels for a stage")
-    s.add_argument("--stage", type=int, choices=(2, 3), default=2)
+    s.add_argument("--stage", type=int, choices=(2, 3, 4), default=2)
     s.add_argument("--size", type=int)
     s.add_argument("--boxes", type=int)
     s.add_argument("--min-len", type=int, default=3)
-    s.add_argument("--max-len", type=int, default=15)
+    s.add_argument("--max-len", type=int, help="default: 15, or 25 for stage 4")
     s.set_defaults(func=cmd_make_levels)
 
     s = sub.add_parser("q-learn", help="stage 1: tabular Q-Learning on one level")
@@ -328,7 +352,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_q_learn)
 
     s = sub.add_parser("train", help="stage 2/3: train DQN")
-    s.add_argument("--stage", type=int, choices=(2, 3), default=2)
+    s.add_argument("--stage", type=int, choices=(2, 3, 4), default=2)
     s.add_argument("--seed", type=int, default=0)
     s.add_argument("--steps", type=int, default=300_000)
     s.add_argument("--double", action="store_true", help="use Double DQN targets")
@@ -343,7 +367,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_train)
 
     s = sub.add_parser("evaluate", help="compare random / bfs / dqn on level splits")
-    s.add_argument("--stage", type=int, choices=(2, 3), default=2)
+    s.add_argument("--stage", type=int, choices=(2, 3, 4), default=2)
     s.add_argument("--splits", nargs="+", default=["val", "test"], choices=("train", "val", "test"))
     s.add_argument("--agents", nargs="+", default=["random", "bfs", "dqn"],
                    choices=("random", "bfs", "dqn"))
@@ -362,7 +386,7 @@ def build_parser() -> argparse.ArgumentParser:
     src.add_argument("--file", help="level drawn with # @ $ . in a text file")
     src.add_argument("--split", choices=("train", "val", "test"), default="test")
     s.add_argument("--idx", type=int, default=0, help="level index within --split")
-    s.add_argument("--stage", type=int, choices=(2, 3), default=2)
+    s.add_argument("--stage", type=int, choices=(2, 3, 4), default=2)
     s.add_argument("--agent", choices=("dqn", "qtable", "bfs", "random"), default="dqn")
     s.add_argument("--seed", type=int, default=0)
     s.add_argument("--model")
@@ -379,10 +403,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_watch)
 
     s = sub.add_parser("gui", help="graphical game: difficulty modes, score, timer and saved progress")
-    s.add_argument("--difficulty", choices=("easy", "medium", "hard", "expert", "ai_test"), default="easy",
-                   help="mode to start in (switch any time in the window with keys 1-5)")
+    s.add_argument("--difficulty", choices=("easy", "medium", "hard", "expert"), default="easy",
+                   help="mode to start in: easy or medium (keys 1-2 in the window); hard and expert are hidden extras")
     s.add_argument("--file", help="play one level drawn in a text file")
-    s.add_argument("--stage", type=int, choices=(2, 3), default=2)
+    s.add_argument("--stage", type=int, choices=(2, 3, 4), default=2)
     s.add_argument("--level", type=int, help="start at this level number (1 = easiest); default: first unsolved")
     s.add_argument("--agent", choices=("dqn", "qtable", "none"), default="dqn")
     s.add_argument("--seed", type=int, default=0, help="which trained model to compare with")
@@ -397,7 +421,7 @@ def build_parser() -> argparse.ArgumentParser:
     src.add_argument("--file", help="level drawn with # @ $ . in a text file")
     src.add_argument("--split", choices=("train", "val", "test"), default="test")
     s.add_argument("--idx", type=int, help="level index within --split (random if omitted)")
-    s.add_argument("--stage", type=int, choices=(2, 3), default=2)
+    s.add_argument("--stage", type=int, choices=(2, 3, 4), default=2)
     s.add_argument("--agent", choices=("dqn", "qtable"), default="dqn")
     s.add_argument("--seed", type=int, default=0, help="which trained model / Q-table seed")
     s.add_argument("--model")
